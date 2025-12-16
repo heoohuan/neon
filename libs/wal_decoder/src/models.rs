@@ -128,6 +128,17 @@ pub enum MetadataRecord {
     LogicalMessage(LogicalMessageRecord),
     Standby(StandbyRecord),
     Replorigin(ReploriginRecord),
+    // openGauss specific records
+    UHeap(UHeapRecord),
+    UHeap2(UHeap2Record),
+    UndoLog(UndoLogRecord),
+    UHeapUndo(UHeapUndoRecord),
+    UndoAction(UndoActionRecord),
+    UHeapBtree(UHeapBtreeRecord),
+    UHeapBtree2(UHeapBtree2Record),
+    Segpage(SegpageRecord),
+    UHeapBtree3(UHeapBtree3Record),
+    UHeapBtree4(UHeapBtree4Record),
 }
 
 #[derive(Clone, Serialize, Deserialize)]
@@ -286,4 +297,256 @@ pub struct StandbyRunningXacts {
 pub enum ReploriginRecord {
     Set(XlReploriginSet),
     Drop(XlReploriginDrop),
+}
+
+// openGauss specific record types
+
+#[derive(Clone, Serialize, Deserialize)]
+pub enum UHeapRecord {
+    // UHeap operations
+    Insert(UHeapInsertRecord),
+    Delete(UHeapDeleteRecord),
+    Update(UHeapUpdateRecord),
+    FreezeTdSlot(UHeapFreezeTdSlotRecord),
+    InvalidTdSlot(UHeapInvalidTdSlotRecord),
+    Clean(UHeapCleanRecord),
+    MultiInsert(UHeapMultiInsertRecord),
+    NewPage(UHeapNewPageRecord),
+    // Placeholder for other operations
+    Generic(UHeapGenericRecord),
+}
+
+#[derive(Clone, Serialize, Deserialize)]
+pub struct UHeapInsertRecord {
+    pub offnum: u16,
+    pub flags: u8,
+    pub has_tuple: bool,
+    pub tuple_data: Option<Bytes>,
+}
+
+#[derive(Clone, Serialize, Deserialize)]
+pub struct UHeapDeleteRecord {
+    pub oldxid: u32,
+    pub offnum: u16,
+    pub td_id: u8,
+    pub flag: u8,
+    pub has_undo_tuple: bool,
+    pub undo_tuple: Option<Bytes>,
+}
+
+#[derive(Clone, Serialize, Deserialize)]
+pub struct UHeapUpdateRecord {
+    pub oldxid: u32,
+    pub old_offnum: u16,
+    pub old_tuple_flag: u16,
+    pub new_offnum: u16,
+    pub old_tuple_td_id: u8,
+    pub flags: u8,
+    pub has_old_tuple: bool,
+    pub has_new_tuple: bool,
+    pub old_tuple: Option<Bytes>,
+    pub new_tuple: Option<Bytes>,
+}
+
+#[derive(Clone, Serialize, Deserialize)]
+pub struct UHeapFreezeTdSlotRecord {
+    pub latest_frozen_xid: u32,
+    pub n_frozen: u16,
+}
+
+#[derive(Clone, Serialize, Deserialize)]
+pub struct UHeapInvalidTdSlotRecord {
+    // Placeholder - need to determine structure
+    pub data: Bytes,
+}
+
+#[derive(Clone, Serialize, Deserialize)]
+pub struct UHeapCleanRecord {
+    pub latest_removed_xid: u32,
+    pub ndeleted: u16,
+    pub ndead: u16,
+    pub flags: u8,
+    pub offsets: Vec<u16>,
+}
+
+#[derive(Clone, Serialize, Deserialize)]
+pub struct UHeapMultiInsertRecord {
+    pub ntuples: i32,
+    pub flags: u8,
+    pub tuples: Vec<UHeapTupleData>,
+}
+
+#[derive(Clone, Serialize, Deserialize)]
+pub struct UHeapTupleData {
+    pub datalen: i32,
+    pub xid: u16,
+    pub td_id: u8,
+    pub locker_td_id: u8,
+    pub flag: u16,
+    pub flag2: u16,
+    pub t_hoff: u8,
+    pub data: Bytes,
+}
+
+#[derive(Clone, Serialize, Deserialize)]
+pub struct UHeapNewPageRecord {
+    // Placeholder - need to determine structure
+    pub data: Bytes,
+}
+
+#[derive(Clone, Serialize, Deserialize)]
+pub struct UHeapGenericRecord {
+    pub info: u8,
+    pub buf: Bytes,
+}
+
+#[derive(Clone, Serialize, Deserialize)]
+pub enum UHeap2Record {
+    // UHeap2 operations
+    BaseShift(UHeap2BaseShiftRecord),
+    Freeze(UHeap2FreezeRecord),
+    ExtendTdSlots(UHeap2ExtendTdSlotsRecord),
+    // Placeholder for other operations
+    Generic(UHeap2GenericRecord),
+}
+
+#[derive(Clone, Serialize, Deserialize)]
+pub struct UHeap2BaseShiftRecord {
+    pub multi: bool,
+    pub delta: i64,
+}
+
+#[derive(Clone, Serialize, Deserialize)]
+pub struct UHeap2FreezeRecord {
+    pub cutoff_xid: u32,
+}
+
+#[derive(Clone, Serialize, Deserialize)]
+pub struct UHeap2ExtendTdSlotsRecord {
+    pub n_prev_slots: u8,
+    pub n_extended: u8,
+}
+
+#[derive(Clone, Serialize, Deserialize)]
+pub struct UHeap2GenericRecord {
+    pub info: u8,
+    pub buf: Bytes,
+}
+
+#[derive(Clone, Serialize, Deserialize)]
+pub enum UndoLogRecord {
+    // Undo log operations - placeholder for now
+    Generic(UndoLogGenericRecord),
+}
+
+#[derive(Clone, Serialize, Deserialize)]
+pub struct UndoLogGenericRecord {
+    pub info: u8,
+    pub buf: Bytes,
+}
+
+#[derive(Clone, Serialize, Deserialize)]
+pub enum UHeapUndoRecord {
+    // UHeap undo operations
+    Page(UHeapUndoPageRecord),
+    ResetSlot(UHeapUndoResetSlotRecord),
+    AbortSpecInsert(UHeapUndoAbortSpecInsertRecord),
+    // Placeholder for other operations
+    Generic(UHeapUndoGenericRecord),
+}
+
+#[derive(Clone, Serialize, Deserialize)]
+pub struct UHeapUndoPageRecord {
+    pub data: Bytes,
+}
+
+#[derive(Clone, Serialize, Deserialize)]
+pub struct UHeapUndoResetSlotRecord {
+    pub urec_ptr: u64,
+    pub zone_id: i32,
+    pub td_slot_id: i32,
+}
+
+#[derive(Clone, Serialize, Deserialize)]
+pub struct UHeapUndoAbortSpecInsertRecord {
+    pub offset: u16,
+    pub zone_id: i32,
+}
+
+#[derive(Clone, Serialize, Deserialize)]
+pub struct UHeapUndoGenericRecord {
+    pub info: u8,
+    pub buf: Bytes,
+}
+
+#[derive(Clone, Serialize, Deserialize)]
+pub enum UndoActionRecord {
+    // Placeholder for UndoAction operations
+    Generic(UndoActionGenericRecord),
+}
+
+#[derive(Clone, Serialize, Deserialize)]
+pub struct UndoActionGenericRecord {
+    pub info: u8,
+    pub buf: Bytes,
+}
+
+#[derive(Clone, Serialize, Deserialize)]
+pub enum UHeapBtreeRecord {
+    // Placeholder for UHeapBtree operations
+    Generic(UHeapBtreeGenericRecord),
+}
+
+#[derive(Clone, Serialize, Deserialize)]
+pub struct UHeapBtreeGenericRecord {
+    pub info: u8,
+    pub buf: Bytes,
+}
+
+#[derive(Clone, Serialize, Deserialize)]
+pub enum UHeapBtree2Record {
+    // Placeholder for UHeapBtree2 operations
+    Generic(UHeapBtree2GenericRecord),
+}
+
+#[derive(Clone, Serialize, Deserialize)]
+pub struct UHeapBtree2GenericRecord {
+    pub info: u8,
+    pub buf: Bytes,
+}
+
+#[derive(Clone, Serialize, Deserialize)]
+pub enum SegpageRecord {
+    // Placeholder for Segpage operations
+    Generic(SegpageGenericRecord),
+}
+
+#[derive(Clone, Serialize, Deserialize)]
+pub struct SegpageGenericRecord {
+    pub info: u8,
+    pub buf: Bytes,
+}
+
+#[derive(Clone, Serialize, Deserialize)]
+pub enum UHeapBtree3Record {
+    // Placeholder for UHeapBtree3 operations
+    Generic(UHeapBtree3GenericRecord),
+}
+
+#[derive(Clone, Serialize, Deserialize)]
+pub struct UHeapBtree3GenericRecord {
+    pub info: u8,
+    pub buf: Bytes,
+}
+
+#[derive(Clone, Serialize, Deserialize)]
+pub enum UHeapBtree4Record {
+    // Placeholder for UHeapBtree4 operations
+    Generic(UHeapBtree4GenericRecord),
+}
+
+#[derive(Clone, Serialize, Deserialize)]
+pub struct UHeapBtree4GenericRecord {
+    pub info: u8,
+    pub buf: Bytes,
 }

@@ -168,6 +168,25 @@ pub const RM_HEAP_ID: u8 = 10;
 pub const RM_REPLORIGIN_ID: u8 = 19;
 pub const RM_LOGICALMSG_ID: u8 = 21;
 
+// openGauss specific RMGR IDs
+pub const RM_SLOT_ID: u8 = 24;
+pub const RM_HEAP3_ID: u8 = 25;
+pub const RM_BARRIER_ID: u8 = 26;
+pub const RM_MOT_ID: u8 = 27;
+pub const RM_UHEAP_ID: u8 = 28;
+pub const RM_UHEAP2_ID: u8 = 29;
+pub const RM_UNDOLOG_ID: u8 = 30;
+pub const RM_UHEAPUNDO_ID: u8 = 31;
+pub const RM_UNDOACTION_ID: u8 = 32;
+pub const RM_UBTREE_ID: u8 = 33;
+pub const RM_UBTREE2_ID: u8 = 34;
+pub const RM_SEGPAGE_ID: u8 = 35;
+pub const RM_COMPRESSION_REL_ID: u8 = 37;
+pub const RM_LOGICALDDLMSG_ID: u8 = 38;
+pub const RM_GENERIC_ID: u8 = 39;
+pub const RM_UBTREE3_ID: u8 = 40;
+pub const RM_UBTREE4_ID: u8 = 41;
+
 // from neon_rmgr.h
 pub const RM_NEON_ID: u8 = 134;
 

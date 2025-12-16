@@ -2343,7 +2343,7 @@ mod tests {
     #[tokio::test]
     async fn test_ingest_real_wal() {
         use postgres_ffi::WAL_SEGMENT_SIZE;
-        use postgres_ffi::waldecoder::WalStreamDecoder;
+        use postgres_ffi::waldecoder::{WalStreamDecoder, WalFormat};
 
         use crate::tenant::harness::*;
 
@@ -2405,6 +2405,7 @@ mod tests {
         // Initialize walingest
         let xlogoff: usize = startpoint.segment_offset(WAL_SEGMENT_SIZE);
         let mut decoder = WalStreamDecoder::new(startpoint, pg_version);
+        decoder.set_wal_format(WalFormat::OpenGauss);
         let mut walingest = WalIngest::new(tline.as_ref(), startpoint, &ctx)
             .await
             .unwrap();
@@ -2421,6 +2422,7 @@ mod tests {
                     &[*modification.tline.get_shard_identity()],
                     lsn,
                     modification.tline.pg_version,
+                    decoder.wal_format,
                 )
                 .unwrap()
                 .remove(modification.tline.get_shard_identity())

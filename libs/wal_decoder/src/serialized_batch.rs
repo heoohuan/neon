@@ -140,6 +140,7 @@ impl SerializedValueBatch {
         shard_records: &mut HashMap<ShardIdentity, InterpretedWalRecord>,
         next_record_lsn: Lsn,
         pg_version: PgMajorVersion,
+        wal_format: postgres_ffi::waldecoder::WalFormat,
     ) -> anyhow::Result<()> {
         // First determine how big the buffers need to be and allocate it up-front.
         // This duplicates some of the work below, but it's empirically much faster.
@@ -223,11 +224,21 @@ impl SerializedValueBatch {
                     assert_eq!(image.len(), BLCKSZ as usize);
 
                     Value::Image(image.freeze())
-                } else {
-                    Value::WalRecord(NeonWalRecord::Postgres {
-                        will_init: blk.will_init || blk.apply_image,
-                        rec: decoded.record.clone(),
-                    })
+                    } else {
+                    match wal_format {
+                        postgres_ffi::waldecoder::WalFormat::Postgres => Value::WalRecord(NeonWalRecord::Postgres {
+                            will_init: blk.will_init || blk.apply_image,
+                            rec: decoded.record.clone(),
+                        }),
+                        postgres_ffi::waldecoder::WalFormat::OpenGauss => {
+                            // For now, wrap openGauss records in Postgres variant; future work will provide
+                            // dedicated OpenGauss->Neon mapping for CLOG/twophase semantics.
+                            Value::WalRecord(NeonWalRecord::Postgres {
+                                will_init: blk.will_init || blk.apply_image,
+                                rec: decoded.record.clone(),
+                            })
+                        }
+                    }
                 };
 
                 let relative_off = record.batch.raw.len() as u64;

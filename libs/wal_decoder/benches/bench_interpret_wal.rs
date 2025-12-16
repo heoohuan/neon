@@ -9,7 +9,7 @@ use criterion::{Criterion, criterion_group, criterion_main};
 use futures::StreamExt;
 use futures::stream::FuturesUnordered;
 use pageserver_api::shard::{ShardIdentity, ShardStripeSize};
-use postgres_ffi::waldecoder::WalStreamDecoder;
+use postgres_ffi::waldecoder::{WalStreamDecoder, WalFormat};
 use postgres_ffi::{MAX_SEND_SIZE, PgMajorVersion, WAL_SEGMENT_SIZE};
 use pprof::criterion::{Output, PProfProfiler};
 use remote_storage::{
@@ -226,6 +226,7 @@ fn decode_interpret_main(bench: &BenchmarkData, shards: &[ShardIdentity]) {
 
 fn decode_interpret(bench: &BenchmarkData, shard: &[ShardIdentity]) -> anyhow::Result<()> {
     let mut decoder = WalStreamDecoder::new(bench.meta.start_lsn, bench.meta.pg_version);
+    decoder.set_wal_format(WalFormat::OpenGauss);
     let xlogoff: usize = bench.meta.start_lsn.segment_offset(WAL_SEGMENT_SIZE);
 
     for chunk in bench.wal[xlogoff..].chunks(MAX_SEND_SIZE) {
@@ -237,6 +238,7 @@ fn decode_interpret(bench: &BenchmarkData, shard: &[ShardIdentity]) -> anyhow::R
                 shard,
                 lsn,
                 bench.meta.pg_version,
+                decoder.wal_format,
             )
             .unwrap();
         }

@@ -9,7 +9,7 @@ use futures::StreamExt;
 use futures::future::Either;
 use pageserver_api::shard::ShardIdentity;
 use postgres_backend::{CopyStreamHandlerEnd, PostgresBackend};
-use postgres_ffi::waldecoder::{WalDecodeError, WalStreamDecoder};
+use postgres_ffi::waldecoder::{WalDecodeError, WalStreamDecoder, WalFormat};
 use postgres_ffi::{PgMajorVersion, get_current_timestamp};
 use pq_proto::{BeMessage, InterpretedWalRecordsBody, WalSndKeepAlive};
 use tokio::io::{AsyncRead, AsyncWrite};
@@ -404,6 +404,7 @@ impl InterpretedWalReader {
         }
 
         let mut wal_decoder = WalStreamDecoder::new(start_pos, self.pg_version);
+        wal_decoder.set_wal_format(WalFormat::OpenGauss);
 
         loop {
             tokio::select! {
@@ -446,6 +447,7 @@ impl InterpretedWalReader {
                             &shard_ids,
                             next_record_lsn,
                             self.pg_version,
+                            wal_decoder.wal_format,
                         )
                         .with_context(|| "Failed to interpret WAL")?;
 
@@ -599,6 +601,7 @@ impl InterpretedWalReader {
                             CurrentPositionUpdate::Reset { from: _, to } => {
                                 self.wal_stream.reset(to).await;
                                 wal_decoder = WalStreamDecoder::new(to, self.pg_version);
+                                wal_decoder.set_wal_format(WalFormat::OpenGauss);
                             },
                             CurrentPositionUpdate::NotReset(_) => {}
                         };

@@ -11,7 +11,7 @@ use futures::StreamExt;
 use pageserver_api::key::rel_block_to_key;
 use pageserver_api::reltag::{RelTag, SlruKind};
 use postgres_ffi::relfile_utils::*;
-use postgres_ffi::waldecoder::WalStreamDecoder;
+use postgres_ffi::waldecoder::{WalStreamDecoder, WalFormat};
 use postgres_ffi::{
     BLCKSZ, ControlFileData, DBState_DB_SHUTDOWNED, Oid, WAL_SEGMENT_SIZE, XLogFileName,
     pg_constants,
@@ -269,6 +269,7 @@ async fn import_wal(
     ctx: &RequestContext,
 ) -> anyhow::Result<()> {
     let mut waldecoder = WalStreamDecoder::new(startpoint, tline.pg_version);
+    waldecoder.set_wal_format(WalFormat::OpenGauss);
 
     let mut segno = startpoint.segment_number(WAL_SEGMENT_SIZE);
     let mut offset = startpoint.segment_offset(WAL_SEGMENT_SIZE);
@@ -317,6 +318,7 @@ async fn import_wal(
                     &shard,
                     lsn,
                     tline.pg_version,
+                    waldecoder.wal_format,
                 )?
                 .remove(tline.get_shard_identity())
                 .unwrap();
@@ -409,6 +411,7 @@ pub async fn import_wal_from_tar(
 ) -> Result<()> {
     // Set up walingest mutable state
     let mut waldecoder = WalStreamDecoder::new(start_lsn, tline.pg_version);
+    waldecoder.set_wal_format(WalFormat::OpenGauss);
     let mut segno = start_lsn.segment_number(WAL_SEGMENT_SIZE);
     let mut offset = start_lsn.segment_offset(WAL_SEGMENT_SIZE);
     let mut last_lsn = start_lsn;
@@ -465,6 +468,7 @@ pub async fn import_wal_from_tar(
                     &shard,
                     lsn,
                     tline.pg_version,
+                    waldecoder.wal_format,
                 )?
                 .remove(tline.get_shard_identity())
                 .unwrap();

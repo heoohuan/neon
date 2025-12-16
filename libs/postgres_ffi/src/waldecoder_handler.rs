@@ -8,7 +8,7 @@
 //! to look deeper into the WAL records to also understand which blocks they modify, the code
 //! for that is in pageserver/src/walrecord.rs
 //!
-use super::super::waldecoder::{State, WalDecodeError, WalStreamDecoder};
+use super::super::waldecoder::{State, WalDecodeError, WalStreamDecoder, WalFormat};
 use super::bindings::{XLogLongPageHeaderData, XLogPageHeaderData, XLogRecord, XLOG_PAGE_MAGIC};
 use super::xlog_utils::*;
 use crate::WAL_SEGMENT_SIZE;
@@ -38,10 +38,15 @@ pub trait WalStreamDecoderHandler {
 impl WalStreamDecoderHandler for WalStreamDecoder {
     fn validate_page_header(&self, hdr: &XLogPageHeaderData) -> Result<(), WalDecodeError> {
         let validate_impl = || {
-            if hdr.xlp_magic != XLOG_PAGE_MAGIC as u16 {
+            // Accept different page magic depending on WAL format. Default is Postgres magic
+            let expected_magic: u16 = match self.wal_format {
+                WalFormat::Postgres => XLOG_PAGE_MAGIC as u16,
+                WalFormat::OpenGauss => OPEN_GAUSS_XLOG_PAGE_MAGIC as u16,
+            };
+            if hdr.xlp_magic != expected_magic {
                 return Err(format!(
                     "invalid xlog page header: xlp_magic={}, expected {}",
-                    hdr.xlp_magic, XLOG_PAGE_MAGIC
+                    hdr.xlp_magic, expected_magic
                 ));
             }
             if hdr.xlp_pageaddr != self.lsn.0 {
@@ -223,8 +228,9 @@ impl WalStreamDecoderHandler for WalStreamDecoder {
             })?;
 
         let mut crc = 0;
-        crc = crc32c_append(crc, &recordbuf[XLOG_RECORD_CRC_OFFS + 4..]);
-        crc = crc32c_append(crc, &recordbuf[0..XLOG_RECORD_CRC_OFFS]);
+        let offs = xlog_record_crc_offs(self.wal_format);
+        crc = crc32c_append(crc, &recordbuf[offs + 4..]);
+        crc = crc32c_append(crc, &recordbuf[0..offs]);
         if crc != xlogrec.xl_crc {
             return Err(WalDecodeError {
                 msg: "WAL record crc mismatch".into(),

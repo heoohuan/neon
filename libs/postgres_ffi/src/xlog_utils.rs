@@ -7,7 +7,7 @@
 // have been named the same as the corresponding PostgreSQL functions instead.
 //
 
-use super::super::waldecoder::WalStreamDecoder;
+use super::super::waldecoder::{WalStreamDecoder, WalFormat};
 use super::bindings::{
     CheckPoint, ControlFileData, DBState_DB_SHUTDOWNED, FullTransactionId, TimeLineID,
     XLogLongPageHeaderData, XLogPageHeaderData, XLogRecPtr, XLogRecord, XLogSegNo, XLOG_PAGE_MAGIC,
@@ -59,6 +59,21 @@ const XID_CHECKPOINT_INTERVAL: u32 = 1024;
 
 pub fn XLogSegmentsPerXLogId(wal_segsz_bytes: usize) -> XLogSegNo {
     (0x100000000u64 / wal_segsz_bytes as u64) as XLogSegNo
+}
+
+// openGauss page magic
+pub const OPEN_GAUSS_XLOG_PAGE_MAGIC: u16 = 0xD074;
+
+use super::super::waldecoder::WalFormat;
+
+/// Return CRC offset inside XLogRecord for given WAL format.
+/// Postgres layout has xl_xid placed immediately after xl_tot_len,
+/// openGauss inserts xl_term (4 bytes) after xl_tot_len, shifting CRC.
+pub fn xlog_record_crc_offs(wal_format: WalFormat) -> usize {
+    match wal_format {
+        WalFormat::Postgres => 4 + 4 + 8 + 1 + 1 + 2, // =20 (existing behaviour)
+        WalFormat::OpenGauss => 4 + 4 + 4 + 8 + 1 + 1 + 2, // =24 (xl_term present)
+    }
 }
 
 pub fn XLogSegNoOffsetToRecPtr(
@@ -236,6 +251,7 @@ pub fn find_end_of_wal(
     tracing::debug!("find_end_of_wal PG_VERSION: {}", pg_version);
 
     let mut decoder = WalStreamDecoder::new(start_lsn, pg_version);
+    decoder.set_wal_format(WalFormat::OpenGauss);
 
     // loop over segments
     loop {

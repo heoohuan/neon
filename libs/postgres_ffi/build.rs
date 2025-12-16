@@ -149,5 +149,84 @@ fn main() -> anyhow::Result<()> {
             .context("Couldn't write bindings")?;
     }
 
+    // Also generate bindings for openGauss headers present in the repository.
+    println!("cargo:rerun-if-changed=bindgen_deps_opengauss.h");
+    // Path to the openGauss include directory. Prefer an externally provided
+    // `OPEN_GAUSS_INSTALL_DIR` (a configured/installed openGauss include tree).
+    // If that's not set, fall back to the repository copy under `openGauss/src/include`.
+    let og_include = if let Some(dir) = env::var_os("OPEN_GAUSS_INSTALL_DIR") {
+        let mut p: PathBuf = dir.into();
+        // If the user provided the install prefix, assume includes are under "include"
+        if p.join("include").exists() {
+            p = p.join("include");
+        }
+        // If path points to `<prefix>/include/postgresql/server` allow that too
+        if p.join("postgresql").join("server").exists() {
+            p = p.join("postgresql").join("server");
+        }
+        if p.is_relative() {
+            let cwd = env::current_dir().context("Failed to get current_dir")?;
+            cwd.join(p)
+        } else {
+            p
+        }
+    } else {
+        let mut default = PathBuf::from("openGauss/src/include");
+        if default.is_relative() {
+            let cwd = env::current_dir().context("Failed to get current_dir")?;
+            default = cwd.join("..").join("..").join(default);
+        }
+        default
+    };
+
+    // Path to our minimal stub include directory that contains a small
+    // `pg_config.h` to satisfy includes in openGauss headers for bindgen.
+    // Use CARGO_MANIFEST_DIR to reliably resolve the path to this crate.
+    let manifest_dir: PathBuf = env::var("CARGO_MANIFEST_DIR")
+        .context("Couldn't read CARGO_MANIFEST_DIR")?
+        .into();
+    let og_stub_include = manifest_dir.join("opengauss_include");
+
+    let og_bindings = bindgen::Builder::default()
+        .header("bindgen_deps_opengauss.h")
+        .parse_callbacks(Box::new(PostgresFfiCallbacks))
+        .allowlist_type("BlockNumber")
+        .allowlist_type("OffsetNumber")
+        .allowlist_type("XLogRecPtr")
+        .allowlist_type("XLogSegNo")
+        .allowlist_type("TimeLineID")
+        .allowlist_type("MultiXactId")
+        .allowlist_type("MultiXactOffset")
+        .allowlist_type("MultiXactStatus")
+        .allowlist_type("ControlFileData")
+        .allowlist_type("CheckPoint")
+        .allowlist_type("FullTransactionId")
+        .allowlist_type("XLogRecord")
+        .allowlist_type("XLogPageHeaderData")
+        .allowlist_type("XLogLongPageHeaderData")
+        .allowlist_var("XLOG_PAGE_MAGIC")
+        .allowlist_var("PG_MAJORVERSION_NUM")
+        .allowlist_var("PG_CONTROL_FILE_SIZE")
+        .allowlist_var("PG_CONTROLFILEDATA_OFFSETOF_CRC")
+        .allowlist_type("PageHeaderData")
+        .allowlist_type("DBState")
+        .allowlist_type("RelMapFile")
+        .allowlist_type("RepOriginId")
+        .explicit_padding(true)
+        // First, add our stub include directory so that `#include <pg_config.h>` is
+        // resolved to the minimal stub we added. Then add the real openGauss
+        // include directory.
+        .clang_arg(format!("-I{}", og_stub_include.display()))
+        .clang_arg(format!("-I{}", og_include.display()))
+        .generate()
+        .context("Unable to generate openGauss bindings")?;
+
+    let out_path: PathBuf = env::var("OUT_DIR")
+        .context("Couldn't read OUT_DIR environment variable var")?
+        .into();
+    og_bindings
+        .write_to_file(out_path.join("bindings_opengauss.rs"))
+        .context("Couldn't write openGauss bindings")?;
+
     Ok(())
 }

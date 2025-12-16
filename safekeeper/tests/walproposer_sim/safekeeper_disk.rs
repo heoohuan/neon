@@ -7,7 +7,7 @@ use anyhow::Result;
 use bytes::{Buf, BytesMut};
 use futures::future::BoxFuture;
 use parking_lot::Mutex;
-use postgres_ffi::waldecoder::WalStreamDecoder;
+use postgres_ffi::waldecoder::{WalStreamDecoder, WalFormat};
 use postgres_ffi::{PgMajorVersion, XLogSegNo};
 use safekeeper::metrics::WalStorageMetrics;
 use safekeeper::state::TimelinePersistentState;
@@ -142,7 +142,11 @@ impl DiskWALStorage {
             write_lsn,
             write_record_lsn: flush_lsn,
             flush_record_lsn: flush_lsn,
-            decoder: WalStreamDecoder::new(flush_lsn, PgMajorVersion::PG16),
+            decoder: {
+                let mut d = WalStreamDecoder::new(flush_lsn, PgMajorVersion::PG16);
+                d.set_wal_format(WalFormat::OpenGauss);
+                d
+            },
             unflushed_bytes: BytesMut::new(),
             disk,
         })
@@ -152,6 +156,7 @@ impl DiskWALStorage {
         let mut buf = [0; 8192];
         let mut pos = start_lsn.0;
         let mut decoder = WalStreamDecoder::new(start_lsn, PgMajorVersion::PG16);
+        decoder.set_wal_format(WalFormat::OpenGauss);
         let mut result = start_lsn;
         loop {
             disk.wal.lock().read(pos, &mut buf);
@@ -204,7 +209,11 @@ impl wal_storage::Storage for DiskWALStorage {
                 self.decoder.available(),
                 startpos,
             );
-            self.decoder = WalStreamDecoder::new(startpos, PgMajorVersion::PG16);
+            self.decoder = {
+                let mut d = WalStreamDecoder::new(startpos, PgMajorVersion::PG16);
+                d.set_wal_format(WalFormat::OpenGauss);
+                d
+            };
         }
         self.decoder.feed_bytes(buf);
         loop {
@@ -242,7 +251,11 @@ impl wal_storage::Storage for DiskWALStorage {
         self.write_record_lsn = end_pos;
         self.flush_record_lsn = end_pos;
         self.unflushed_bytes.clear();
-        self.decoder = WalStreamDecoder::new(end_pos, PgMajorVersion::PG16);
+        self.decoder = {
+            let mut d = WalStreamDecoder::new(end_pos, PgMajorVersion::PG16);
+            d.set_wal_format(WalFormat::OpenGauss);
+            d
+        };
 
         Ok(())
     }

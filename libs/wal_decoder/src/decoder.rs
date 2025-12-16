@@ -9,6 +9,7 @@ use pageserver_api::reltag::{RelTag, SlruKind};
 use pageserver_api::shard::ShardIdentity;
 use postgres_ffi::walrecord::*;
 use postgres_ffi::{PgMajorVersion, pg_constants};
+use postgres_ffi::waldecoder::WalFormat;
 use postgres_ffi_types::forknum::VISIBILITYMAP_FORKNUM;
 use utils::lsn::Lsn;
 
@@ -25,6 +26,7 @@ impl InterpretedWalRecord {
         shards: &[ShardIdentity],
         next_record_lsn: Lsn,
         pg_version: PgMajorVersion,
+        wal_format: WalFormat,
     ) -> anyhow::Result<HashMap<ShardIdentity, InterpretedWalRecord>> {
         let mut decoded = DecodedWALRecord::default();
         decode_wal_record(buf, &mut decoded, pg_version)?;
@@ -56,12 +58,14 @@ impl InterpretedWalRecord {
             &mut shard_records,
             next_record_lsn,
             pg_version,
+            wal_format,
         )?;
         SerializedValueBatch::from_decoded_filtered(
             decoded,
             &mut shard_records,
             next_record_lsn,
             pg_version,
+            wal_format,
         )?;
 
         Ok(shard_records)
@@ -79,6 +83,7 @@ impl MetadataRecord {
         shard_records: &mut HashMap<ShardIdentity, InterpretedWalRecord>,
         next_record_lsn: Lsn,
         pg_version: PgMajorVersion,
+        wal_format: WalFormat,
     ) -> anyhow::Result<()> {
         // Note: this doesn't actually copy the bytes since
         // the [`Bytes`] type implements it via a level of indirection.
@@ -98,9 +103,9 @@ impl MetadataRecord {
                 tracing::trace!("XLOG_TBLSPC_CREATE/DROP is not handled yet");
                 None
             }
-            pg_constants::RM_CLOG_ID => Self::decode_clog_record(&mut buf, decoded, pg_version)?,
+            pg_constants::RM_CLOG_ID => Self::decode_clog_record(&mut buf, decoded, pg_version, wal_format)?,
             pg_constants::RM_XACT_ID => {
-                Self::decode_xact_record(&mut buf, decoded, next_record_lsn)?
+                Self::decode_xact_record(&mut buf, decoded, next_record_lsn, wal_format)?
             }
             pg_constants::RM_MULTIXACT_ID => {
                 Self::decode_multixact_record(&mut buf, decoded, pg_version)?
@@ -121,6 +126,45 @@ impl MetadataRecord {
             }
             pg_constants::RM_STANDBY_ID => Self::decode_standby_record(&mut buf, decoded)?,
             pg_constants::RM_REPLORIGIN_ID => Self::decode_replorigin_record(&mut buf, decoded)?,
+            // openGauss specific RMGRs
+            pg_constants::RM_SLOT_ID => {
+                tracing::trace!("RM_SLOT_ID record not handled yet");
+                None
+            }
+            pg_constants::RM_HEAP3_ID => {
+                tracing::trace!("RM_HEAP3_ID record not handled yet");
+                None
+            }
+            pg_constants::RM_BARRIER_ID => {
+                tracing::trace!("RM_BARRIER_ID record not handled yet");
+                None
+            }
+            pg_constants::RM_MOT_ID => {
+                tracing::trace!("RM_MOT_ID (Memory-Optimized Table) record not handled yet");
+                None
+            }
+            pg_constants::RM_UHEAP_ID => Self::decode_uheap_record(&mut buf, decoded, pg_version)?,
+            pg_constants::RM_UHEAP2_ID => Self::decode_uheap2_record(&mut buf, decoded, pg_version)?,
+            pg_constants::RM_UNDOLOG_ID => Self::decode_undolog_record(&mut buf, decoded, pg_version)?,
+            pg_constants::RM_UHEAPUNDO_ID => Self::decode_uheapundo_record(&mut buf, decoded, pg_version)?,
+            pg_constants::RM_UNDOACTION_ID => Self::decode_undoaction_record(&mut buf, decoded, pg_version)?,
+            pg_constants::RM_UBTREE_ID => Self::decode_ubtree_record(&mut buf, decoded, pg_version)?,
+            pg_constants::RM_UBTREE2_ID => Self::decode_ubtree2_record(&mut buf, decoded, pg_version)?,
+            pg_constants::RM_SEGPAGE_ID => Self::decode_segpage_record(&mut buf, decoded, pg_version)?,
+            pg_constants::RM_COMPRESSION_REL_ID => {
+                tracing::trace!("RM_COMPRESSION_REL_ID record not handled yet");
+                None
+            }
+            pg_constants::RM_LOGICALDDLMSG_ID => {
+                tracing::trace!("RM_LOGICALDDLMSG_ID record not handled yet");
+                None
+            }
+            pg_constants::RM_GENERIC_ID => {
+                tracing::trace!("RM_GENERIC_ID record not handled yet");
+                None
+            }
+            pg_constants::RM_UBTREE3_ID => Self::decode_ubtree3_record(&mut buf, decoded, pg_version)?,
+            pg_constants::RM_UBTREE4_ID => Self::decode_ubtree4_record(&mut buf, decoded, pg_version)?,
             _unexpected => {
                 // TODO: consider failing here instead of blindly doing something without
                 // understanding the protocol
@@ -753,32 +797,65 @@ impl MetadataRecord {
         buf: &mut Bytes,
         decoded: &DecodedWALRecord,
         pg_version: PgMajorVersion,
+        _wal_format: WalFormat,
     ) -> anyhow::Result<Option<MetadataRecord>> {
         let info = decoded.xl_info & !pg_constants::XLR_INFO_MASK;
 
-        if info == pg_constants::CLOG_ZEROPAGE {
-            let pageno = if pg_version < PgMajorVersion::PG17 {
-                buf.get_u32_le()
-            } else {
-                buf.get_u64_le() as u32
-            };
-            let segno = pageno / pg_constants::SLRU_PAGES_PER_SEGMENT;
-            let rpageno = pageno % pg_constants::SLRU_PAGES_PER_SEGMENT;
+        // Handle OpenGauss-specific layout differences if needed
+        match _wal_format {
+            WalFormat::OpenGauss => {
+                if info == pg_constants::CLOG_ZEROPAGE {
+                    // openGauss encodes pageno as int64 in the DDL zero-page record
+                    let pageno_i64 = buf.get_i64_le();
+                    let pageno = pageno_i64 as u64 as u32;
+                    let segno = pageno / pg_constants::SLRU_PAGES_PER_SEGMENT;
+                    let rpageno = pageno % pg_constants::SLRU_PAGES_PER_SEGMENT;
 
-            Ok(Some(MetadataRecord::Clog(ClogRecord::ZeroPage(
-                ClogZeroPage { segno, rpageno },
-            ))))
-        } else {
-            assert_eq!(info, pg_constants::CLOG_TRUNCATE);
-            let xlrec = XlClogTruncate::decode(buf, pg_version);
+                    Ok(Some(MetadataRecord::Clog(ClogRecord::ZeroPage(
+                        ClogZeroPage { segno, rpageno },
+                    ))))
+                } else {
+                    // Treat truncate record as (pageno:int64, oldest_xid:u32, oldest_xid_db:u32)
+                    let pageno_i64 = buf.get_i64_le();
+                    let pageno = pageno_i64 as u64 as u32;
+                    let oldest_xid = buf.get_u32_le();
+                    let oldest_xid_db = buf.get_u32_le();
 
-            Ok(Some(MetadataRecord::Clog(ClogRecord::Truncate(
-                ClogTruncate {
-                    pageno: xlrec.pageno,
-                    oldest_xid: xlrec.oldest_xid,
-                    oldest_xid_db: xlrec.oldest_xid_db,
-                },
-            ))))
+                    Ok(Some(MetadataRecord::Clog(ClogRecord::Truncate(
+                        ClogTruncate {
+                            pageno,
+                            oldest_xid,
+                            oldest_xid_db,
+                        },
+                    ))))
+                }
+            }
+            _ => {
+                if info == pg_constants::CLOG_ZEROPAGE {
+                    let pageno = if pg_version < PgMajorVersion::PG17 {
+                        buf.get_u32_le()
+                    } else {
+                        buf.get_u64_le() as u32
+                    };
+                    let segno = pageno / pg_constants::SLRU_PAGES_PER_SEGMENT;
+                    let rpageno = pageno % pg_constants::SLRU_PAGES_PER_SEGMENT;
+
+                    Ok(Some(MetadataRecord::Clog(ClogRecord::ZeroPage(
+                        ClogZeroPage { segno, rpageno },
+                    ))))
+                } else {
+                    assert_eq!(info, pg_constants::CLOG_TRUNCATE);
+                    let xlrec = XlClogTruncate::decode(buf, pg_version);
+
+                    Ok(Some(MetadataRecord::Clog(ClogRecord::Truncate(
+                        ClogTruncate {
+                            pageno: xlrec.pageno,
+                            oldest_xid: xlrec.oldest_xid,
+                            oldest_xid_db: xlrec.oldest_xid_db,
+                        },
+                    ))))
+                }
+            }
         }
     }
 
@@ -786,6 +863,7 @@ impl MetadataRecord {
         buf: &mut Bytes,
         decoded: &DecodedWALRecord,
         lsn: Lsn,
+        _wal_format: WalFormat,
     ) -> anyhow::Result<Option<MetadataRecord>> {
         let info = decoded.xl_info & pg_constants::XLOG_XACT_OPMASK;
         let origin_id = decoded.origin_id;
@@ -982,6 +1060,577 @@ impl MetadataRecord {
             ))));
         }
 
-        Ok(None)
+    fn decode_uheap_insert(
+        buf: &mut Bytes,
+        decoded: &DecodedWALRecord,
+    ) -> anyhow::Result<Option<MetadataRecord>> {
+        // XlUHeapInsert: offnum (2), flags (1), padding (1) = 4 bytes
+        if buf.remaining() < 4 {
+            bail!("UHeap insert record too short");
+        }
+
+        let offnum = buf.get_u16_le();
+        let flags = buf.get_u8();
+        let _padding = buf.get_u8();
+
+        // Check if record contains tuple data
+        let has_tuple = (decoded.xl_info & 0x80) != 0; // XLOG_UHEAP_INIT_PAGE
+        let tuple_data = if has_tuple && buf.remaining() > 0 {
+            Some(buf.clone())
+        } else {
+            None
+        };
+
+        Ok(Some(MetadataRecord::UHeap(UHeapRecord::Insert(
+            UHeapInsertRecord {
+                offnum,
+                flags,
+                has_tuple,
+                tuple_data,
+            },
+        ))))
+    }
+
+    fn decode_uheap_delete(
+        buf: &mut Bytes,
+        decoded: &DecodedWALRecord,
+    ) -> anyhow::Result<Option<MetadataRecord>> {
+        // XlUHeapDelete: oldxid (4), offnum (2), td_id (1), flag (1), padding (3) = 12 bytes
+        if buf.remaining() < 12 {
+            bail!("UHeap delete record too short");
+        }
+
+        let oldxid = buf.get_u32_le();
+        let offnum = buf.get_u16_le();
+        let td_id = buf.get_u8();
+        let flag = buf.get_u8();
+        let _padding = buf.get_u24_le(); // 3 bytes padding
+
+        // Check if undo tuple is present
+        let has_undo_tuple = (flag & 0x02) != 0; // XLZ_HAS_DELETE_UNDOTUPLE
+        let undo_tuple = if has_undo_tuple && buf.remaining() > 0 {
+            Some(buf.clone())
+        } else {
+            None
+        };
+
+        Ok(Some(MetadataRecord::UHeap(UHeapRecord::Delete(
+            UHeapDeleteRecord {
+                oldxid,
+                offnum,
+                td_id,
+                flag,
+                has_undo_tuple,
+                undo_tuple,
+            },
+        ))))
+    }
+
+    fn decode_uheap_update(
+        buf: &mut Bytes,
+        decoded: &DecodedWALRecord,
+    ) -> anyhow::Result<Option<MetadataRecord>> {
+        // XlUHeapUpdate: oldxid (4), old_offnum (2), old_tuple_flag (2), new_offnum (2),
+        // old_tuple_td_id (1), flags (1) = 12 bytes
+        if buf.remaining() < 12 {
+            bail!("UHeap update record too short");
+        }
+
+        let oldxid = buf.get_u32_le();
+        let old_offnum = buf.get_u16_le();
+        let old_tuple_flag = buf.get_u16_le();
+        let new_offnum = buf.get_u16_le();
+        let old_tuple_td_id = buf.get_u8();
+        let flags = buf.get_u8();
+
+        // Check for tuple data based on flags
+        let has_old_tuple = (flags & 0x01) != 0; // XLZ_UPDATE_PREFIX_FROM_OLD
+        let has_new_tuple = (decoded.xl_info & 0x80) != 0; // XLOG_UHEAP_INIT_PAGE
+
+        let old_tuple = if has_old_tuple && buf.remaining() > 0 {
+            Some(buf.clone())
+        } else {
+            None
+        };
+
+        let new_tuple = if has_new_tuple && buf.remaining() > 0 {
+            Some(buf.clone())
+        } else {
+            None
+        };
+
+        Ok(Some(MetadataRecord::UHeap(UHeapRecord::Update(
+            UHeapUpdateRecord {
+                oldxid,
+                old_offnum,
+                old_tuple_flag,
+                new_offnum,
+                old_tuple_td_id,
+                flags,
+                has_old_tuple,
+                has_new_tuple,
+                old_tuple,
+                new_tuple,
+            },
+        ))))
+    }
+
+    fn decode_uheap_freeze_td_slot(
+        buf: &mut Bytes,
+        _decoded: &DecodedWALRecord,
+    ) -> anyhow::Result<Option<MetadataRecord>> {
+        // XlUHeapFreezeTdSlot: latestFrozenXid (4), nFrozen (2), padding (6) = 12 bytes
+        if buf.remaining() < 12 {
+            bail!("UHeap freeze td slot record too short");
+        }
+
+        let latest_frozen_xid = buf.get_u32_le();
+        let n_frozen = buf.get_u16_le();
+        let _padding = buf.get_u48_le(); // 6 bytes padding
+
+        Ok(Some(MetadataRecord::UHeap(UHeapRecord::FreezeTdSlot(
+            UHeapFreezeTdSlotRecord {
+                latest_frozen_xid,
+                n_frozen,
+            },
+        ))))
+    }
+
+    fn decode_uheap_invalid_td_slot(
+        buf: &mut Bytes,
+        _decoded: &DecodedWALRecord,
+    ) -> anyhow::Result<Option<MetadataRecord>> {
+        // Placeholder implementation - need to determine actual structure
+        let data = buf.clone();
+        Ok(Some(MetadataRecord::UHeap(UHeapRecord::InvalidTdSlot(
+            UHeapInvalidTdSlotRecord { data },
+        ))))
+    }
+
+    fn decode_uheap_clean(
+        buf: &mut Bytes,
+        _decoded: &DecodedWALRecord,
+    ) -> anyhow::Result<Option<MetadataRecord>> {
+        // XlUHeapClean: latestRemovedXid (4), ndeleted (2), ndead (2), flags (1), padding (3) = 12 bytes
+        if buf.remaining() < 12 {
+            bail!("UHeap clean record too short");
+        }
+
+        let latest_removed_xid = buf.get_u32_le();
+        let ndeleted = buf.get_u16_le();
+        let ndead = buf.get_u16_le();
+        let flags = buf.get_u8();
+        let _padding = buf.get_u24_le(); // 3 bytes padding
+
+        // Read offset numbers - 2*nredirected + ndead + nunused
+        let mut offsets = Vec::new();
+        while buf.remaining() >= 2 {
+            offsets.push(buf.get_u16_le());
+        }
+
+        Ok(Some(MetadataRecord::UHeap(UHeapRecord::Clean(
+            UHeapCleanRecord {
+                latest_removed_xid,
+                ndeleted,
+                ndead,
+                flags,
+                offsets,
+            },
+        ))))
+    }
+
+    fn decode_uheap_multi_insert(
+        buf: &mut Bytes,
+        decoded: &DecodedWALRecord,
+    ) -> anyhow::Result<Option<MetadataRecord>> {
+        // XlUHeapMultiInsert: ntuples (4), flags (1) = 5 bytes
+        if buf.remaining() < 5 {
+            bail!("UHeap multi insert record too short");
+        }
+
+        let ntuples = buf.get_i32_le();
+        let flags = buf.get_u8();
+
+        let mut tuples = Vec::new();
+        for _ in 0..ntuples {
+            if buf.remaining() < 12 { // SizeOfMultiInsertUTuple
+                bail!("UHeap multi insert tuple data too short");
+            }
+
+            let datalen = buf.get_i32_le();
+            let xid = buf.get_u16_le();
+            let td_id_locker_td_id = buf.get_u16_le();
+            let td_id = (td_id_locker_td_id & 0xFF) as u8;
+            let locker_td_id = ((td_id_locker_td_id >> 8) & 0xFF) as u8;
+            let flag = buf.get_u16_le();
+            let flag2 = buf.get_u16_le();
+            let t_hoff = buf.get_u8();
+
+            if buf.remaining() < datalen as usize {
+                bail!("UHeap multi insert tuple data length mismatch");
+            }
+
+            let data = buf.split_to(datalen as usize);
+
+            tuples.push(UHeapTupleData {
+                datalen,
+                xid,
+                td_id,
+                locker_td_id,
+                flag,
+                flag2,
+                t_hoff,
+                data: data.into(),
+            });
+        }
+
+        Ok(Some(MetadataRecord::UHeap(UHeapRecord::MultiInsert(
+            UHeapMultiInsertRecord {
+                ntuples,
+                flags,
+                tuples,
+            },
+        ))))
+    }
+
+    fn decode_uheap_new_page(
+        buf: &mut Bytes,
+        _decoded: &DecodedWALRecord,
+    ) -> anyhow::Result<Option<MetadataRecord>> {
+        // Placeholder implementation - need to determine actual structure
+        let data = buf.clone();
+        Ok(Some(MetadataRecord::UHeap(UHeapRecord::NewPage(
+            UHeapNewPageRecord { data },
+        ))))
+    }
+
+    fn decode_uheap_record(
+        buf: &mut Bytes,
+        decoded: &DecodedWALRecord,
+        _pg_version: PgMajorVersion,
+    ) -> anyhow::Result<Option<MetadataRecord>> {
+        let info = decoded.xl_info & pg_constants::XLR_RMGR_INFO_MASK;
+        let op = decoded.xl_info & 0x70; // XLOG_UHEAP_OPMASK
+
+        match op {
+            0x00 => {
+                // XLOG_UHEAP_INSERT
+                Self::decode_uheap_insert(buf, decoded)
+            }
+            0x10 => {
+                // XLOG_UHEAP_DELETE
+                Self::decode_uheap_delete(buf, decoded)
+            }
+            0x20 => {
+                // XLOG_UHEAP_UPDATE
+                Self::decode_uheap_update(buf, decoded)
+            }
+            0x30 => {
+                // XLOG_UHEAP_FREEZE_TD_SLOT
+                Self::decode_uheap_freeze_td_slot(buf, decoded)
+            }
+            0x40 => {
+                // XLOG_UHEAP_INVALID_TD_SLOT
+                Self::decode_uheap_invalid_td_slot(buf, decoded)
+            }
+            0x50 => {
+                // XLOG_UHEAP_CLEAN
+                Self::decode_uheap_clean(buf, decoded)
+            }
+            0x60 => {
+                // XLOG_UHEAP_MULTI_INSERT
+                Self::decode_uheap_multi_insert(buf, decoded)
+            }
+            0x70 => {
+                // XLOG_UHEAP_NEW_PAGE
+                Self::decode_uheap_new_page(buf, decoded)
+            }
+            _ => {
+                // Unknown operation, return generic record
+                let remaining = buf.clone();
+                Ok(Some(MetadataRecord::UHeap(UHeapRecord::Generic(
+                    UHeapGenericRecord {
+                        info,
+                        buf: remaining,
+                    },
+                ))))
+            }
+        }
+    }
+
+    fn decode_uheap2_record(
+        buf: &mut Bytes,
+        decoded: &DecodedWALRecord,
+        _pg_version: PgMajorVersion,
+    ) -> anyhow::Result<Option<MetadataRecord>> {
+        let info = decoded.xl_info & pg_constants::XLR_RMGR_INFO_MASK;
+        let op = decoded.xl_info & 0x30; // UHeap2 operation mask
+
+        match op {
+            0x00 => {
+                // XLOG_UHEAP2_BASE_SHIFT
+                Self::decode_uheap2_base_shift(buf, decoded)
+            }
+            0x10 => {
+                // XLOG_UHEAP2_FREEZE
+                Self::decode_uheap2_freeze(buf, decoded)
+            }
+            0x20 => {
+                // XLOG_UHEAP2_EXTEND_TD_SLOTS
+                Self::decode_uheap2_extend_td_slots(buf, decoded)
+            }
+            _ => {
+                // Unknown operation, return generic record
+                let remaining = buf.clone();
+                Ok(Some(MetadataRecord::UHeap2(UHeap2Record::Generic(
+                    UHeap2GenericRecord {
+                        info,
+                        buf: remaining,
+                    },
+                ))))
+            }
+        }
+    }
+
+    fn decode_uheap2_base_shift(
+        buf: &mut Bytes,
+        _decoded: &DecodedWALRecord,
+    ) -> anyhow::Result<Option<MetadataRecord>> {
+        // XlUHeapBaseShift: multi (1), delta (8) = 9 bytes
+        if buf.remaining() < 9 {
+            bail!("UHeap2 base shift record too short");
+        }
+
+        let multi = buf.get_u8() != 0;
+        let delta = buf.get_i64_le();
+
+        Ok(Some(MetadataRecord::UHeap2(UHeap2Record::BaseShift(
+            UHeap2BaseShiftRecord { multi, delta },
+        ))))
+    }
+
+    fn decode_uheap2_freeze(
+        buf: &mut Bytes,
+        _decoded: &DecodedWALRecord,
+    ) -> anyhow::Result<Option<MetadataRecord>> {
+        // XlUHeapFreeze: cutoff_xid (4) = 4 bytes
+        if buf.remaining() < 4 {
+            bail!("UHeap2 freeze record too short");
+        }
+
+        let cutoff_xid = buf.get_u32_le();
+
+        Ok(Some(MetadataRecord::UHeap2(UHeap2Record::Freeze(
+            UHeap2FreezeRecord { cutoff_xid },
+        ))))
+    }
+
+    fn decode_uheap2_extend_td_slots(
+        buf: &mut Bytes,
+        _decoded: &DecodedWALRecord,
+    ) -> anyhow::Result<Option<MetadataRecord>> {
+        // XlUHeapExtendTdSlots: nPrevSlots (1), nExtended (1) = 2 bytes
+        if buf.remaining() < 2 {
+            bail!("UHeap2 extend td slots record too short");
+        }
+
+        let n_prev_slots = buf.get_u8();
+        let n_extended = buf.get_u8();
+
+        Ok(Some(MetadataRecord::UHeap2(UHeap2Record::ExtendTdSlots(
+            UHeap2ExtendTdSlotsRecord {
+                n_prev_slots,
+                n_extended,
+            },
+        ))))
+    }
+        let info = decoded.xl_info & pg_constants::XLR_RMGR_INFO_MASK;
+        let remaining = buf.clone();
+        Ok(Some(MetadataRecord::UndoLog(UndoLogRecord::Generic(
+            UndoLogGenericRecord {
+                info,
+                buf: remaining,
+            },
+        ))))
+    }
+
+    fn decode_uheapundo_record(
+        buf: &mut Bytes,
+        decoded: &DecodedWALRecord,
+        _pg_version: PgMajorVersion,
+    ) -> anyhow::Result<Option<MetadataRecord>> {
+        let info = decoded.xl_info & pg_constants::XLR_RMGR_INFO_MASK;
+        let op = decoded.xl_info & 0x30; // UHeapUndo operation mask
+
+        match op {
+            0x00 => {
+                // XLOG_UHEAPUNDO_PAGE
+                Self::decode_uheapundo_page(buf, decoded)
+            }
+            0x10 => {
+                // XLOG_UHEAPUNDO_RESET_SLOT
+                Self::decode_uheapundo_reset_slot(buf, decoded)
+            }
+            0x20 => {
+                // XLOG_UHEAPUNDO_ABORT_SPECINSERT
+                Self::decode_uheapundo_abort_specinsert(buf, decoded)
+            }
+            _ => {
+                // Unknown operation, return generic record
+                let remaining = buf.clone();
+                Ok(Some(MetadataRecord::UHeapUndo(UHeapUndoRecord::Generic(
+                    UHeapUndoGenericRecord {
+                        info,
+                        buf: remaining,
+                    },
+                ))))
+            }
+        }
+    }
+
+    fn decode_uheapundo_page(
+        buf: &mut Bytes,
+        _decoded: &DecodedWALRecord,
+    ) -> anyhow::Result<Option<MetadataRecord>> {
+        // Placeholder implementation - UHeapUndoActionWALInfo structure
+        let data = buf.clone();
+        Ok(Some(MetadataRecord::UHeapUndo(UHeapUndoRecord::Page(
+            UHeapUndoPageRecord { data },
+        ))))
+    }
+
+    fn decode_uheapundo_reset_slot(
+        buf: &mut Bytes,
+        _decoded: &DecodedWALRecord,
+    ) -> anyhow::Result<Option<MetadataRecord>> {
+        // XlUHeapUndoResetSlot: urec_ptr (8), zone_id (4), td_slot_id (4) = 16 bytes
+        if buf.remaining() < 16 {
+            bail!("UHeap undo reset slot record too short");
+        }
+
+        let urec_ptr = buf.get_u64_le();
+        let zone_id = buf.get_i32_le();
+        let td_slot_id = buf.get_i32_le();
+
+        Ok(Some(MetadataRecord::UHeapUndo(UHeapUndoRecord::ResetSlot(
+            UHeapUndoResetSlotRecord {
+                urec_ptr,
+                zone_id,
+                td_slot_id,
+            },
+        ))))
+    }
+
+    fn decode_uheapundo_abort_specinsert(
+        buf: &mut Bytes,
+        _decoded: &DecodedWALRecord,
+    ) -> anyhow::Result<Option<MetadataRecord>> {
+        // XlUHeapUndoAbortSpecInsert: offset (2), zone_id (4) = 6 bytes
+        if buf.remaining() < 6 {
+            bail!("UHeap undo abort specinsert record too short");
+        }
+
+        let offset = buf.get_u16_le();
+        let zone_id = buf.get_i32_le();
+
+        Ok(Some(MetadataRecord::UHeapUndo(UHeapUndoRecord::AbortSpecInsert(
+            UHeapUndoAbortSpecInsertRecord { offset, zone_id },
+        ))))
+    }
+
+    fn decode_undoaction_record(
+        buf: &mut Bytes,
+        decoded: &DecodedWALRecord,
+        _pg_version: PgMajorVersion,
+    ) -> anyhow::Result<Option<MetadataRecord>> {
+        // Undo action records
+        let info = decoded.xl_info & pg_constants::XLR_RMGR_INFO_MASK;
+        let remaining = buf.clone();
+        Ok(Some(MetadataRecord::UndoAction(UndoActionRecord::Generic(
+            UndoActionGenericRecord {
+                info,
+                buf: remaining,
+            },
+        ))))
+    }
+
+    fn decode_ubtree_record(
+        buf: &mut Bytes,
+        decoded: &DecodedWALRecord,
+        _pg_version: PgMajorVersion,
+    ) -> anyhow::Result<Option<MetadataRecord>> {
+        // UHeap BTree index records
+        let info = decoded.xl_info & pg_constants::XLR_RMGR_INFO_MASK;
+        let remaining = buf.clone();
+        Ok(Some(MetadataRecord::UHeapBtree(UHeapBtreeRecord::Generic(
+            UHeapBtreeGenericRecord {
+                info,
+                buf: remaining,
+            },
+        ))))
+    }
+
+    fn decode_ubtree2_record(
+        buf: &mut Bytes,
+        decoded: &DecodedWALRecord,
+        _pg_version: PgMajorVersion,
+    ) -> anyhow::Result<Option<MetadataRecord>> {
+        // UHeap BTree2 index records
+        let info = decoded.xl_info & pg_constants::XLR_RMGR_INFO_MASK;
+        let remaining = buf.clone();
+        Ok(Some(MetadataRecord::UHeapBtree2(UHeapBtree2Record::Generic(
+            UHeapBtree2GenericRecord {
+                info,
+                buf: remaining,
+            },
+        ))))
+    }
+
+    fn decode_segpage_record(
+        buf: &mut Bytes,
+        decoded: &DecodedWALRecord,
+        _pg_version: PgMajorVersion,
+    ) -> anyhow::Result<Option<MetadataRecord>> {
+        // Segment page storage records
+        let info = decoded.xl_info & pg_constants::XLR_RMGR_INFO_MASK;
+        let remaining = buf.clone();
+        Ok(Some(MetadataRecord::Segpage(SegpageRecord::Generic(
+            SegpageGenericRecord {
+                info,
+                buf: remaining,
+            },
+        ))))
+    }
+
+    fn decode_ubtree3_record(
+        buf: &mut Bytes,
+        decoded: &DecodedWALRecord,
+        _pg_version: PgMajorVersion,
+    ) -> anyhow::Result<Option<MetadataRecord>> {
+        // UHeap BTree3 index records
+        let info = decoded.xl_info & pg_constants::XLR_RMGR_INFO_MASK;
+        let remaining = buf.clone();
+        Ok(Some(MetadataRecord::UHeapBtree3(UHeapBtree3Record::Generic(
+            UHeapBtree3GenericRecord {
+                info,
+                buf: remaining,
+            },
+        ))))
+    }
+
+    fn decode_ubtree4_record(
+        buf: &mut Bytes,
+        decoded: &DecodedWALRecord,
+        _pg_version: PgMajorVersion,
+    ) -> anyhow::Result<Option<MetadataRecord>> {
+        // UHeap BTree4 index records
+        let info = decoded.xl_info & pg_constants::XLR_RMGR_INFO_MASK;
+        let remaining = buf.clone();
+        Ok(Some(MetadataRecord::UHeapBtree4(UHeapBtree4Record::Generic(
+            UHeapBtree4GenericRecord {
+                info,
+                buf: remaining,
+            },
+        ))))
     }
 }

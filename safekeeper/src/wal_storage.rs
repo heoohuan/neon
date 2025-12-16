@@ -17,7 +17,7 @@ use bytes::Bytes;
 use camino::{Utf8Path, Utf8PathBuf};
 use futures::future::BoxFuture;
 use postgres_ffi::v14::xlog_utils::{IsPartialXLogFileName, IsXLogFileName, XLogFromFileName};
-use postgres_ffi::waldecoder::WalStreamDecoder;
+use postgres_ffi::waldecoder::{WalStreamDecoder, WalFormat};
 use postgres_ffi::{PG_TLI, XLogFileName, XLogSegNo, dispatch_pgversion};
 use postgres_versioninfo::{PgMajorVersion, PgVersionId};
 use pq_proto::SystemId;
@@ -230,10 +230,14 @@ impl PhysicalStorage {
             write_record_lsn: write_lsn,
             flush_lsn,
             flush_record_lsn: flush_lsn,
-            decoder: WalStreamDecoder::new(
+            decoder: {
+                let mut d = WalStreamDecoder::new(
                 write_lsn,
                 PgMajorVersion::try_from(state.server.pg_version).unwrap(),
-            ),
+                );
+                d.set_wal_format(WalFormat::OpenGauss);
+                d
+            },
             file: None,
             pending_wal_truncation: true,
         })
@@ -474,7 +478,11 @@ impl Storage for PhysicalStorage {
                 startpos,
             );
             let pg_version = self.decoder.pg_version;
-            self.decoder = WalStreamDecoder::new(startpos, pg_version);
+            self.decoder = {
+                let mut d = WalStreamDecoder::new(startpos, pg_version);
+                d.set_wal_format(WalFormat::OpenGauss);
+                d
+            };
         }
         self.decoder.feed_bytes(buf);
 
