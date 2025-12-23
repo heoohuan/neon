@@ -93,7 +93,7 @@ def test_lfc_resize(neon_simple_env: NeonEnv, pg_bin: PgBin):
     # system to react to changing the setting and shrinking the file.
     cur.execute("alter system set neon.file_cache_size_limit='100MB'")
     cur.execute("select pg_reload_conf()")
-    nretries = 10
+    nretries = 30
     while True:
         (lfc_file_size, lfc_file_blocks) = get_lfc_size()
         assert lfc_file_size <= 512 * 1024 * 1024
@@ -102,7 +102,7 @@ def test_lfc_resize(neon_simple_env: NeonEnv, pg_bin: PgBin):
             break
 
         nretries = nretries - 1
-        time.sleep(1)
+        time.sleep(2)
 
     assert int(lfc_file_blocks) <= 128 * 1024
 

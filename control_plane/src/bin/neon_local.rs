@@ -127,7 +127,7 @@ struct InitCmdArgs {
 /// Start pageserver and safekeepers.
 #[derive(clap::Args)]
 struct StartCmdArgs {
-    #[clap(long = "start-timeout", default_value = "10s")]
+    #[clap(long = "start-timeout", default_value = "30s")]
     timeout: humantime::Duration,
 }
 
@@ -335,7 +335,19 @@ struct PageserverStartCmdArgs {
     pageserver_id: Option<NodeId>,
     /// Timeout until we fail the command.
     #[clap(short = 't', long)]
-    #[arg(default_value = "10s")]
+    #[arg(default_value = "30s")]
+    start_timeout: humantime::Duration,
+}
+
+/// Restart local pageserver.
+#[derive(clap::Args)]
+struct PageserverRestartCmdArgs {
+    /// Pageserver ID.
+    #[clap(long = "id")]
+    pageserver_id: Option<NodeId>,
+    /// Timeout until we fail the command.
+    #[clap(short = 't', long)]
+    #[arg(default_value = "30s")]
     start_timeout: humantime::Duration,
 }
 
@@ -375,7 +387,7 @@ enum StorageControllerCmd {
 struct StorageControllerStartCmdArgs {
     /// Timeout until we fail the command.
     #[clap(short = 't', long)]
-    #[arg(default_value = "10s")]
+    #[arg(default_value = "30s")]
     start_timeout: humantime::Duration,
     /// Identifier used to distinguish storage controller instances.
     #[clap(long)]
@@ -415,7 +427,7 @@ enum StorageBrokerCmd {
 #[derive(clap::Args)]
 struct StorageBrokerStartCmdArgs {
     /// Timeout until we fail the command.
-    #[clap(short = 't', long, default_value = "10s")]
+    #[clap(short = 't', long, default_value = "30s")]
     start_timeout: humantime::Duration,
 }
 
@@ -448,7 +460,7 @@ enum EndpointStorageCmd {
 struct EndpointStorageStartCmd {
     /// Timeout until we fail the command.
     #[clap(short = 't', long)]
-    #[arg(default_value = "10s")]
+    #[arg(default_value = "30s")]
     start_timeout: humantime::Duration,
 }
 
@@ -474,9 +486,19 @@ struct SafekeeperStartCmdArgs {
 
     /// Timeout until we fail the command.
     #[clap(short = 't', long)]
-    #[arg(default_value = "10s")]
+    #[arg(default_value = "30s")]
     start_timeout: humantime::Duration,
 }
+
+/// Start object storage.
+#[derive(clap::Args)]
+struct EndpointStorageStartCmd {
+    /// Timeout until we fail the command.
+    #[clap(short = 't', long)]
+    #[arg(default_value = "30s")]
+    start_timeout: humantime::Duration,
+}
+
 
 /// Stop local safekeeper.
 #[derive(clap::Args)]
@@ -509,7 +531,7 @@ struct SafekeeperRestartCmdArgs {
 
     /// Timeout until we fail the command.
     #[clap(short = 't', long)]
-    #[arg(default_value = "10s")]
+    #[arg(default_value = "30s")]
     start_timeout: humantime::Duration,
 }
 

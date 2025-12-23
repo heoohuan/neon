@@ -18,6 +18,14 @@ from fixtures.metrics import parse_metrics
 from fixtures.paths import BASE_DIR, COMPUTE_CONFIG_DIR
 from fixtures.utils import wait_until
 
+# 添加Docker相关导入
+try:
+    import docker
+    from docker.errors import DockerException
+    DOCKER_AVAILABLE = True
+except ImportError:
+    DOCKER_AVAILABLE = False
+
 if TYPE_CHECKING:
     from collections.abc import Callable
     from types import TracebackType
@@ -46,6 +54,18 @@ if TYPE_CHECKING:
     class Query(TypedDict):
         query_name: str
         query: str
+
+
+# 添加Docker可用性检查函数
+def is_docker_available():
+    if not DOCKER_AVAILABLE:
+        return False
+    try:
+        client = docker.from_env()
+        client.ping()
+        return True
+    except (DockerException, FileNotFoundError, AttributeError):
+        return False
 
 
 JSONNET_IMPORT_CACHE: dict[str, bytes] = {}
@@ -359,6 +379,7 @@ else:
     "exporter",
     [SqlExporterProcess.COMPUTE, SqlExporterProcess.AUTOSCALING],
 )
+@pytest.mark.skipif(not is_docker_available(), reason="Docker is not available")
 def test_sql_exporter_metrics_e2e(
     pg_version: PgVersion,
     neon_simple_env: NeonEnv,
@@ -382,7 +403,7 @@ def test_sql_exporter_metrics_e2e(
 
         TESTCONTAINERS_RYUK_DISABLED=true
 
-    Note that you will need the Podman socket to be running. On a systemd-based
+    Note that you may need the Podman socket to be running. On a systemd-based
     system, that command will look something like:
 
         # Use `enable --now` to start the socket on login and immediately.

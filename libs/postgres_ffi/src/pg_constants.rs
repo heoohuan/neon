@@ -167,9 +167,54 @@ pub const RM_HEAP2_ID: u8 = 9;
 pub const RM_HEAP_ID: u8 = 10;
 pub const RM_REPLORIGIN_ID: u8 = 19;
 pub const RM_LOGICALMSG_ID: u8 = 21;
+pub const RM_HEAP3_ID: u8 = 22;
+pub const RM_BARRIER_ID: u8 = 23;
+pub const RM_UHEAP_ID: u8 = 24;
+pub const RM_UHEAP2_ID: u8 = 25;
+pub const RM_UNDOLOG_ID: u8 = 26;
+pub const RM_UHEAPUNDO_ID: u8 = 27;
+pub const RM_UNDOACTION_ID: u8 = 28;
+pub const RM_UBTREE_ID: u8 = 29;
+pub const RM_UBTREE2_ID: u8 = 30;
+pub const RM_SEGPAGE_ID: u8 = 31;
+pub const RM_COMPRESSION_REL_ID: u8 = 32;
+pub const RM_LOGICALDDLMSG_ID: u8 = 33;
+pub const RM_UBTREE3_ID: u8 = 34;
+pub const RM_UBTREE4_ID: u8 = 35;
 
 // from neon_rmgr.h
 pub const RM_NEON_ID: u8 = 134;
+
+// openGauss WAL operation constants
+pub const XLOG_UHEAP_OPMASK: u8 = 0x70; /* mask for operation info */
+pub const XLOG_UHEAP_INSERT: u8 = 0x00;
+pub const XLOG_UHEAP_DELETE: u8 = 0x10;
+pub const XLOG_UHEAP_UPDATE: u8 = 0x20;
+pub const XLOG_UHEAP_FREEZE_TD_SLOT: u8 = 0x30;
+pub const XLOG_UHEAP_INVALID_TD_SLOT: u8 = 0x40;
+pub const XLOG_UHEAP_CLEAN: u8 = 0x50;
+pub const XLOG_UHEAP_MULTI_INSERT: u8 = 0x60;
+pub const XLOG_UHEAP_NEW_PAGE: u8 = 0x70;
+pub const XLOG_UHEAP_INIT_PAGE: u8 = 0x80;
+pub const XLOG_UHEAP_INIT_TOAST_PAGE: u8 = 0x08;
+
+pub const XLOG_UBTREE_OPMASK: u8 = 0xF0; /* mask for operation info */
+pub const XLOG_UBTREE_INSERT_LEAF: u8 = 0x00;
+pub const XLOG_UBTREE_INSERT_UPPER: u8 = 0x10;
+pub const XLOG_UBTREE_INSERT_META: u8 = 0x20;
+pub const XLOG_UBTREE_SPLIT_L: u8 = 0x30;
+pub const XLOG_UBTREE_SPLIT_R: u8 = 0x40;
+pub const XLOG_UBTREE_SPLIT_L_ROOT: u8 = 0x50;
+pub const XLOG_UBTREE_SPLIT_R_ROOT: u8 = 0x60;
+pub const XLOG_UBTREE_DELETE: u8 = 0x70;
+pub const XLOG_UBTREE_UNLINK_PAGE: u8 = 0x80;
+pub const XLOG_UBTREE_UNLINK_PAGE_META: u8 = 0x90;
+pub const XLOG_UBTREE_NEWROOT: u8 = 0xA0;
+pub const XLOG_UBTREE_MARK_PAGE_HALFDEAD: u8 = 0xB0;
+pub const XLOG_UBTREE_VACUUM: u8 = 0xC0;
+pub const XLOG_UBTREE_REUSE_PAGE: u8 = 0xD0;
+pub const XLOG_UBTREE_MARK_DELETE: u8 = 0xE0;
+pub const XLOG_UBTREE_PRUNE_PAGE: u8 = 0xF0;
 
 pub const XLOG_NEON_HEAP_INIT_PAGE: u8 = 0x80;
 

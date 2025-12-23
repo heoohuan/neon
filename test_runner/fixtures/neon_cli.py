@@ -454,7 +454,26 @@ class NeonLocalCli(AbstractNeonCli):
         if immediate:
             cmd.extend(["-m", "immediate"])
 
-        return self.raw_cli(cmd)
+        # 增加超时和重试机制
+        import time
+        for attempt in range(3):  # 最多重试3次
+            try:
+                return self.raw_cli(cmd, timeout=60)  # 增加超时到60秒
+            except subprocess.TimeoutExpired:
+                if attempt < 2:  # 不是最后一次尝试
+                    time.sleep(2 ** attempt)  # 指数退避
+                    continue
+                else:
+                    raise  # 最后一次尝试失败则抛出异常
+            except Exception:
+                if attempt < 2 and not immediate:  # 不是最后一次尝试且未使用immediate模式
+                    time.sleep(2 ** attempt)
+                    continue
+                elif attempt == 2 and not immediate:  # 最后一次尝试且未使用immediate模式，尝试immediate模式
+                    cmd.extend(["-m", "immediate"])
+                    return self.raw_cli(cmd, timeout=60)
+                else:
+                    raise  # 抛出异常
 
     def safekeeper_start(
         self,

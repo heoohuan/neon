@@ -189,6 +189,8 @@ pub struct DecodedWALRecord {
     pub xl_xid: TransactionId,
     pub xl_info: u8,
     pub xl_rmid: u8,
+    pub xl_term: u32,        // openGauss: term for distributed transactions
+    pub xl_bucket_id: u16,   // openGauss: bucket id for hash tables
     pub record: Bytes, // raw XLogRecord
 
     pub blocks: Vec<DecodedBkpBlock>,
@@ -211,6 +213,10 @@ impl DecodedWALRecord {
                 PgMajorVersion::PG15 => info == crate::v15::bindings::XLOG_DBASE_CREATE_FILE_COPY,
                 PgMajorVersion::PG16 => info == crate::v16::bindings::XLOG_DBASE_CREATE_FILE_COPY,
                 PgMajorVersion::PG17 => info == crate::v17::bindings::XLOG_DBASE_CREATE_FILE_COPY,
+                PgMajorVersion::GB06 => {
+                    // openGauss v6 database creations are legacy like PG14
+                    info == crate::v6::bindings::XLOG_DBASE_CREATE
+                }
             }
         } else {
             false
@@ -496,6 +502,8 @@ pub fn decode_wal_record(
     decoded.xl_xid = xlogrec.xl_xid;
     decoded.xl_info = xlogrec.xl_info;
     decoded.xl_rmid = xlogrec.xl_rmid;
+    decoded.xl_term = xlogrec.xl_term;
+    decoded.xl_bucket_id = xlogrec.xl_bucket_id;
     decoded.record = record;
     decoded.origin_id = origin_id;
     decoded.main_data_offset = main_data_offset;
@@ -888,6 +896,168 @@ pub mod v17 {
     }
 }
 
+pub mod v6 {
+    use bytes::{Buf, Bytes};
+
+    pub use super::v14::XlHeapLockUpdated;
+    // Removed pub use for XlHeapInsert, etc., to define custom ones for openGauss
+
+    pub use crate::TimeLineID;
+    pub use postgres_ffi_types::TimestampTz;
+
+    use crate::{OffsetNumber, TransactionId};
+
+    #[repr(C)]
+    #[derive(Debug)]
+    pub struct XlHeapInsert {
+        pub offnum: OffsetNumber,
+        pub flags: u8,
+    }
+
+    impl XlHeapInsert {
+        pub fn decode(buf: &mut Bytes) -> XlHeapInsert {
+            XlHeapInsert {
+                offnum: buf.get_u16_le(),
+                flags: buf.get_u8(),
+            }
+        }
+    }
+
+    #[repr(C)]
+    #[derive(Debug)]
+    pub struct XlHeapMultiInsert {
+        pub flags: u8,
+        pub _padding: u8,
+        pub ntuples: u16,
+    }
+
+    impl XlHeapMultiInsert {
+        pub fn decode(buf: &mut Bytes) -> XlHeapMultiInsert {
+            XlHeapMultiInsert {
+                flags: buf.get_u8(),
+                _padding: buf.get_u8(),
+                ntuples: buf.get_u16_le(),
+            }
+        }
+    }
+
+    #[repr(C)]
+    #[derive(Debug)]
+    pub struct XlHeapDelete {
+        pub xmax: TransactionId,
+        pub offnum: OffsetNumber,
+        pub infobits_set: u8,
+        pub flags: u8,
+    }
+
+    impl XlHeapDelete {
+        pub fn decode(buf: &mut Bytes) -> XlHeapDelete {
+            XlHeapDelete {
+                xmax: buf.get_u32_le(),
+                offnum: buf.get_u16_le(),
+                infobits_set: buf.get_u8(),
+                flags: buf.get_u8(),
+            }
+        }
+    }
+
+    #[repr(C)]
+    #[derive(Debug)]
+    pub struct XlHeapUpdate {
+        pub old_xmax: TransactionId,
+        pub old_offnum: OffsetNumber,
+        pub old_infobits_set: u8,
+        pub flags: u8,
+        pub t_cid: u32,
+        pub new_xmax: TransactionId,
+        pub new_offnum: OffsetNumber,
+    }
+
+    impl XlHeapUpdate {
+        pub fn decode(buf: &mut Bytes) -> XlHeapUpdate {
+            XlHeapUpdate {
+                old_xmax: buf.get_u32_le(),
+                old_offnum: buf.get_u16_le(),
+                old_infobits_set: buf.get_u8(),
+                flags: buf.get_u8(),
+                t_cid: buf.get_u32_le(),
+                new_xmax: buf.get_u32_le(),
+                new_offnum: buf.get_u16_le(),
+            }
+        }
+    }
+
+    #[repr(C)]
+    #[derive(Debug)]
+    pub struct XlHeapLock {
+        pub locking_xid: TransactionId,
+        pub offnum: OffsetNumber,
+        pub infobits_set: u8,
+        pub flags: u8,
+    }
+
+    impl XlHeapLock {
+        pub fn decode(buf: &mut Bytes) -> XlHeapLock {
+            XlHeapLock {
+                locking_xid: buf.get_u32_le(),
+                offnum: buf.get_u16_le(),
+                infobits_set: buf.get_u8(),
+                flags: buf.get_u8(),
+            }
+        }
+    }
+
+    #[repr(C)]
+    #[derive(Debug)]
+    pub struct XlParameterChange {
+        pub max_connections: i32,
+        pub max_worker_processes: i32,
+        pub max_wal_senders: i32,
+        pub max_prepared_xacts: i32,
+        pub max_locks_per_xact: i32,
+        pub wal_level: i32,
+        pub wal_log_hints: bool,
+        pub track_commit_timestamp: bool,
+        pub _padding: [u8; 2],
+    }
+
+    impl XlParameterChange {
+        pub fn decode(buf: &mut Bytes) -> XlParameterChange {
+            XlParameterChange {
+                max_connections: buf.get_i32_le(),
+                max_worker_processes: buf.get_i32_le(),
+                max_wal_senders: buf.get_i32_le(),
+                max_prepared_xacts: buf.get_i32_le(),
+                max_locks_per_xact: buf.get_i32_le(),
+                wal_level: buf.get_i32_le(),
+                wal_log_hints: buf.get_u8() != 0,
+                track_commit_timestamp: buf.get_u8() != 0,
+                _padding: [buf.get_u8(), buf.get_u8()],
+            }
+        }
+    }
+
+    #[repr(C)]
+    #[derive(Debug)]
+    pub struct XlEndOfRecovery {
+        pub end_time: TimestampTz,
+        pub this_time_line_id: TimeLineID,
+        pub prev_time_line_id: TimeLineID,
+        pub wal_level: i32,
+    }
+
+    impl XlEndOfRecovery {
+        pub fn decode(buf: &mut Bytes) -> XlEndOfRecovery {
+            XlEndOfRecovery {
+                end_time: buf.get_i64_le(),
+                this_time_line_id: buf.get_u32_le(),
+                prev_time_line_id: buf.get_u32_le(),
+                wal_level: buf.get_i32_le(),
+            }
+        }
+    }
+}
+
 #[repr(C)]
 #[derive(Debug)]
 pub struct XlSmgrCreate {
@@ -1227,6 +1397,182 @@ pub fn describe_postgres_wal_record(record: &Bytes) -> Result<String, Deserializ
                 }
             }
         }
+        pg_constants::RM_UHEAP_ID => {
+            let raw_info = xlogrec.xl_info;
+            // Check for special cases that don't use OPMASK
+            if raw_info == pg_constants::XLOG_UHEAP_INIT_PAGE {
+                "UHEAP INIT_PAGE"
+            } else {
+                let info = raw_info & pg_constants::XLOG_UHEAP_OPMASK;
+                match info {
+                    pg_constants::XLOG_UHEAP_INSERT => "UHEAP INSERT",
+                    pg_constants::XLOG_UHEAP_DELETE => "UHEAP DELETE",
+                    pg_constants::XLOG_UHEAP_UPDATE => "UHEAP UPDATE",
+                    pg_constants::XLOG_UHEAP_FREEZE_TD_SLOT => "UHEAP FREEZE_TD_SLOT",
+                    pg_constants::XLOG_UHEAP_INVALID_TD_SLOT => "UHEAP INVALID_TD_SLOT",
+                    pg_constants::XLOG_UHEAP_CLEAN => "UHEAP CLEAN",
+                    pg_constants::XLOG_UHEAP_MULTI_INSERT => "UHEAP MULTI_INSERT",
+                    pg_constants::XLOG_UHEAP_NEW_PAGE => "UHEAP NEW_PAGE",
+                    _ => {
+                        unknown_str = format!("UHEAP UNKNOWN_0x{:02x}", info);
+                        &unknown_str
+                    }
+                }
+            }
+        }
+        pg_constants::RM_UHEAP2_ID => {
+            let info = xlogrec.xl_info & pg_constants::XLOG_UHEAP_OPMASK;
+            match info {
+                pg_constants::XLOG_UHEAP_INSERT => "UHEAP2 INSERT",
+                pg_constants::XLOG_UHEAP_DELETE => "UHEAP2 DELETE",
+                pg_constants::XLOG_UHEAP_UPDATE => "UHEAP2 UPDATE",
+                pg_constants::XLOG_UHEAP_FREEZE_TD_SLOT => "UHEAP2 FREEZE_TD_SLOT",
+                pg_constants::XLOG_UHEAP_INVALID_TD_SLOT => "UHEAP2 INVALID_TD_SLOT",
+                pg_constants::XLOG_UHEAP_CLEAN => "UHEAP2 CLEAN",
+                pg_constants::XLOG_UHEAP_MULTI_INSERT => "UHEAP2 MULTI_INSERT",
+                pg_constants::XLOG_UHEAP_NEW_PAGE => "UHEAP2 NEW_PAGE",
+                pg_constants::XLOG_UHEAP_INIT_PAGE => "UHEAP2 INIT_PAGE",
+                _ => {
+                    unknown_str = format!("UHEAP2 UNKNOWN_0x{:02x}", info);
+                    &unknown_str
+                }
+            }
+        }
+        pg_constants::RM_UNDOLOG_ID => {
+            let info = xlogrec.xl_info & pg_constants::XLR_RMGR_INFO_MASK;
+            unknown_str = format!("UNDOLOG INFO_0x{:02x}", info);
+            &unknown_str
+        }
+        pg_constants::RM_UHEAPUNDO_ID => {
+            let info = xlogrec.xl_info & pg_constants::XLR_RMGR_INFO_MASK;
+            unknown_str = format!("UHEAPUNDO INFO_0x{:02x}", info);
+            &unknown_str
+        }
+        pg_constants::RM_UNDOACTION_ID => {
+            let info = xlogrec.xl_info & pg_constants::XLR_RMGR_INFO_MASK;
+            unknown_str = format!("UNDOACTION INFO_0x{:02x}", info);
+            &unknown_str
+        }
+        pg_constants::RM_UBTREE_ID => {
+            let info = xlogrec.xl_info & pg_constants::XLOG_UBTREE_OPMASK;
+            match info {
+                pg_constants::XLOG_UBTREE_INSERT_LEAF => "UBTREE INSERT_LEAF",
+                pg_constants::XLOG_UBTREE_INSERT_UPPER => "UBTREE INSERT_UPPER",
+                pg_constants::XLOG_UBTREE_INSERT_META => "UBTREE INSERT_META",
+                pg_constants::XLOG_UBTREE_SPLIT_L => "UBTREE SPLIT_L",
+                pg_constants::XLOG_UBTREE_SPLIT_R => "UBTREE SPLIT_R",
+                pg_constants::XLOG_UBTREE_SPLIT_L_ROOT => "UBTREE SPLIT_L_ROOT",
+                pg_constants::XLOG_UBTREE_SPLIT_R_ROOT => "UBTREE SPLIT_R_ROOT",
+                pg_constants::XLOG_UBTREE_DELETE => "UBTREE DELETE",
+                pg_constants::XLOG_UBTREE_UNLINK_PAGE => "UBTREE UNLINK_PAGE",
+                pg_constants::XLOG_UBTREE_UNLINK_PAGE_META => "UBTREE UNLINK_PAGE_META",
+                pg_constants::XLOG_UBTREE_NEWROOT => "UBTREE NEWROOT",
+                pg_constants::XLOG_UBTREE_MARK_PAGE_HALFDEAD => "UBTREE MARK_PAGE_HALFDEAD",
+                pg_constants::XLOG_UBTREE_VACUUM => "UBTREE VACUUM",
+                pg_constants::XLOG_UBTREE_REUSE_PAGE => "UBTREE REUSE_PAGE",
+                pg_constants::XLOG_UBTREE_MARK_DELETE => "UBTREE MARK_DELETE",
+                pg_constants::XLOG_UBTREE_PRUNE_PAGE => "UBTREE PRUNE_PAGE",
+                _ => {
+                    unknown_str = format!("UBTREE UNKNOWN_0x{:02x}", info);
+                    &unknown_str
+                }
+            }
+        }
+        pg_constants::RM_UBTREE2_ID => {
+            let info = xlogrec.xl_info & pg_constants::XLOG_UBTREE_OPMASK;
+            match info {
+                pg_constants::XLOG_UBTREE_INSERT_LEAF => "UBTREE2 INSERT_LEAF",
+                pg_constants::XLOG_UBTREE_INSERT_UPPER => "UBTREE2 INSERT_UPPER",
+                pg_constants::XLOG_UBTREE_INSERT_META => "UBTREE2 INSERT_META",
+                pg_constants::XLOG_UBTREE_SPLIT_L => "UBTREE2 SPLIT_L",
+                pg_constants::XLOG_UBTREE_SPLIT_R => "UBTREE2 SPLIT_R",
+                pg_constants::XLOG_UBTREE_SPLIT_L_ROOT => "UBTREE2 SPLIT_L_ROOT",
+                pg_constants::XLOG_UBTREE_SPLIT_R_ROOT => "UBTREE2 SPLIT_R_ROOT",
+                pg_constants::XLOG_UBTREE_DELETE => "UBTREE2 DELETE",
+                pg_constants::XLOG_UBTREE_UNLINK_PAGE => "UBTREE2 UNLINK_PAGE",
+                pg_constants::XLOG_UBTREE_UNLINK_PAGE_META => "UBTREE2 UNLINK_PAGE_META",
+                pg_constants::XLOG_UBTREE_NEWROOT => "UBTREE2 NEWROOT",
+                pg_constants::XLOG_UBTREE_MARK_PAGE_HALFDEAD => "UBTREE2 MARK_PAGE_HALFDEAD",
+                pg_constants::XLOG_UBTREE_VACUUM => "UBTREE2 VACUUM",
+                pg_constants::XLOG_UBTREE_REUSE_PAGE => "UBTREE2 REUSE_PAGE",
+                pg_constants::XLOG_UBTREE_MARK_DELETE => "UBTREE2 MARK_DELETE",
+                pg_constants::XLOG_UBTREE_PRUNE_PAGE => "UBTREE2 PRUNE_PAGE",
+                _ => {
+                    unknown_str = format!("UBTREE2 UNKNOWN_0x{:02x}", info);
+                    &unknown_str
+                }
+            }
+        }
+        pg_constants::RM_SEGPAGE_ID => {
+            let info = xlogrec.xl_info & pg_constants::XLR_RMGR_INFO_MASK;
+            unknown_str = format!("SEGPAGE INFO_0x{:02x}", info);
+            &unknown_str
+        }
+        pg_constants::RM_COMPRESSION_REL_ID => {
+            let info = xlogrec.xl_info & pg_constants::XLR_RMGR_INFO_MASK;
+            unknown_str = format!("COMPRESSION_REL INFO_0x{:02x}", info);
+            &unknown_str
+        }
+        pg_constants::RM_LOGICALDDLMSG_ID => {
+            let info = xlogrec.xl_info & pg_constants::XLR_RMGR_INFO_MASK;
+            unknown_str = format!("LOGICALDDLMSG INFO_0x{:02x}", info);
+            &unknown_str
+        }
+        pg_constants::RM_UBTREE3_ID => {
+            let info = xlogrec.xl_info & pg_constants::XLOG_UBTREE_OPMASK;
+            match info {
+                pg_constants::XLOG_UBTREE_INSERT_LEAF => "UBTREE3 INSERT_LEAF",
+                pg_constants::XLOG_UBTREE_INSERT_UPPER => "UBTREE3 INSERT_UPPER",
+                pg_constants::XLOG_UBTREE_INSERT_META => "UBTREE3 INSERT_META",
+                pg_constants::XLOG_UBTREE_SPLIT_L => "UBTREE3 SPLIT_L",
+                pg_constants::XLOG_UBTREE_SPLIT_R => "UBTREE3 SPLIT_R",
+                pg_constants::XLOG_UBTREE_SPLIT_L_ROOT => "UBTREE3 SPLIT_L_ROOT",
+                pg_constants::XLOG_UBTREE_SPLIT_R_ROOT => "UBTREE3 SPLIT_R_ROOT",
+                pg_constants::XLOG_UBTREE_DELETE => "UBTREE3 DELETE",
+                pg_constants::XLOG_UBTREE_UNLINK_PAGE => "UBTREE3 UNLINK_PAGE",
+                pg_constants::XLOG_UBTREE_UNLINK_PAGE_META => "UBTREE3 UNLINK_PAGE_META",
+                pg_constants::XLOG_UBTREE_NEWROOT => "UBTREE3 NEWROOT",
+                pg_constants::XLOG_UBTREE_MARK_PAGE_HALFDEAD => "UBTREE3 MARK_PAGE_HALFDEAD",
+                pg_constants::XLOG_UBTREE_VACUUM => "UBTREE3 VACUUM",
+                pg_constants::XLOG_UBTREE_REUSE_PAGE => "UBTREE3 REUSE_PAGE",
+                pg_constants::XLOG_UBTREE_MARK_DELETE => "UBTREE3 MARK_DELETE",
+                pg_constants::XLOG_UBTREE_PRUNE_PAGE => "UBTREE3 PRUNE_PAGE",
+                _ => {
+                    unknown_str = format!("UBTREE3 UNKNOWN_0x{:02x}", info);
+                    &unknown_str
+                }
+            }
+        }
+        pg_constants::RM_UBTREE4_ID => {
+            let info = xlogrec.xl_info & pg_constants::XLOG_UBTREE_OPMASK;
+            match info {
+                pg_constants::XLOG_UBTREE_INSERT_LEAF => "UBTREE4 INSERT_LEAF",
+                pg_constants::XLOG_UBTREE_INSERT_UPPER => "UBTREE4 INSERT_UPPER",
+                pg_constants::XLOG_UBTREE_INSERT_META => "UBTREE4 INSERT_META",
+                pg_constants::XLOG_UBTREE_SPLIT_L => "UBTREE4 SPLIT_L",
+                pg_constants::XLOG_UBTREE_SPLIT_R => "UBTREE4 SPLIT_R",
+                pg_constants::XLOG_UBTREE_SPLIT_L_ROOT => "UBTREE4 SPLIT_L_ROOT",
+                pg_constants::XLOG_UBTREE_SPLIT_R_ROOT => "UBTREE4 SPLIT_R_ROOT",
+                pg_constants::XLOG_UBTREE_DELETE => "UBTREE4 DELETE",
+                pg_constants::XLOG_UBTREE_UNLINK_PAGE => "UBTREE4 UNLINK_PAGE",
+                pg_constants::XLOG_UBTREE_UNLINK_PAGE_META => "UBTREE4 UNLINK_PAGE_META",
+                pg_constants::XLOG_UBTREE_NEWROOT => "UBTREE4 NEWROOT",
+                pg_constants::XLOG_UBTREE_MARK_PAGE_HALFDEAD => "UBTREE4 MARK_PAGE_HALFDEAD",
+                pg_constants::XLOG_UBTREE_VACUUM => "UBTREE4 VACUUM",
+                pg_constants::XLOG_UBTREE_REUSE_PAGE => "UBTREE4 REUSE_PAGE",
+                pg_constants::XLOG_UBTREE_MARK_DELETE => "UBTREE4 MARK_DELETE",
+                pg_constants::XLOG_UBTREE_PRUNE_PAGE => "UBTREE4 PRUNE_PAGE",
+                _ => {
+                    unknown_str = format!("UBTREE4 UNKNOWN_0x{:02x}", info);
+                    &unknown_str
+                }
+            }
+        }
+        pg_constants::RM_BARRIER_ID => {
+            let info = xlogrec.xl_info & pg_constants::XLR_RMGR_INFO_MASK;
+            unknown_str = format!("BARRIER INFO_0x{:02x}", info);
+            &unknown_str
+        }
         rmid => {
             let info = xlogrec.xl_info & pg_constants::XLR_RMGR_INFO_MASK;
 
@@ -1236,4 +1582,80 @@ pub fn describe_postgres_wal_record(record: &Bytes) -> Result<String, Deserializ
     };
 
     Ok(String::from(result))
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use crate::pg_constants;
+    use crate::v17::wal_generator::Record;
+
+    #[test]
+    fn test_wal_record_encoding_decoding() {
+        // Create a test WAL record with openGauss fields
+        let record = Record {
+            rmid: pg_constants::RM_HEAP_ID,
+            info: pg_constants::XLOG_FPI | pg_constants::XLR_RMGR_INFO_MASK,
+            data: Bytes::from(vec![1, 2, 3, 4, 5]),
+        };
+
+        // Encode the record
+        let encoded = record.encode(Lsn(0x1000));
+
+        // Decode the record
+        let mut decoded = DecodedWALRecord::default();
+        decode_wal_record(encoded, &mut decoded, PgMajorVersion::PG17).unwrap();
+
+        // Verify the fields
+        assert_eq!(decoded.xl_term, 0); // Default value in Record::encode
+        assert_eq!(decoded.xl_bucket_id, 0); // Default value in Record::encode
+        assert_eq!(decoded.xl_xid, 0); // Default value in Record::encode
+        assert_eq!(decoded.xl_rmid, pg_constants::RM_HEAP_ID);
+        // Note: record data is stored in decoded.record, not decoded.data
+    }
+
+    #[test]
+    fn test_opengauss_rmgr_ids() {
+        // Test that openGauss RMGR IDs are properly defined
+        assert_eq!(pg_constants::RM_UHEAP_ID, 24);
+        assert_eq!(pg_constants::RM_UBTREE_ID, 29);
+        assert_eq!(pg_constants::RM_UNDOLOG_ID, 26);
+        assert_eq!(pg_constants::RM_BARRIER_ID, 23);
+        assert_eq!(pg_constants::RM_SEGPAGE_ID, 31);
+        assert_eq!(pg_constants::RM_COMPRESSION_REL_ID, 32);
+        assert_eq!(pg_constants::RM_LOGICALDDLMSG_ID, 33);
+    }
+
+    #[test]
+    fn test_opengauss_wal_descriptions() {
+        // Test UHEAP INSERT description
+        let record = create_test_record(pg_constants::RM_UHEAP_ID, pg_constants::XLOG_UHEAP_INSERT);
+        let desc = describe_postgres_wal_record(&record).unwrap();
+        assert_eq!(desc, "UHEAP INSERT");
+
+        // Test UBTREE INSERT_LEAF description
+        let record = create_test_record(pg_constants::RM_UBTREE_ID, pg_constants::XLOG_UBTREE_INSERT_LEAF);
+        let desc = describe_postgres_wal_record(&record).unwrap();
+        assert_eq!(desc, "UBTREE INSERT_LEAF");
+
+        // Test UBTREE DELETE description
+        let record = create_test_record(pg_constants::RM_UBTREE_ID, pg_constants::XLOG_UBTREE_DELETE);
+        let desc = describe_postgres_wal_record(&record).unwrap();
+        assert_eq!(desc, "UBTREE DELETE");
+
+        // Test UHEAP INIT_PAGE (special case)
+        let record = create_test_record(pg_constants::RM_UHEAP_ID, pg_constants::XLOG_UHEAP_INIT_PAGE);
+        let desc = describe_postgres_wal_record(&record).unwrap();
+        assert_eq!(desc, "UHEAP INIT_PAGE");
+    }
+
+    fn create_test_record(rmid: u8, info: u8) -> Bytes {
+        use crate::v17::wal_generator::Record;
+        let record = Record {
+            rmid,
+            info, // Use info directly without ORing with XLR_RMGR_INFO_MASK
+            data: Bytes::from(vec![1, 2, 3, 4]),
+        };
+        record.encode(Lsn(0x1000))
+    }
 }

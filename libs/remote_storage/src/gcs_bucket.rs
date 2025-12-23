@@ -6,34 +6,27 @@ use crate::{
     ConcurrencyLimiter, Download, DownloadError, DownloadOpts, GCS_SCOPES, Listing, ListingMode,
     ListingObject, MAX_KEYS_PER_DELETE_GCS, REMOTE_STORAGE_PREFIX_SEPARATOR, RemotePath,
     RemoteStorage, StorageMetadata, TimeTravelError, TimeoutOrCancel, GCSVersion, VersionId,
-    GCSVersionListing, 
 };
 use anyhow::Context;
-use azure_core::Etag;
 use bytes::Bytes;
-use bytes::BytesMut;
 use chrono::DateTime;
 use futures::stream::Stream;
-use futures::stream::TryStreamExt;
 use futures_util::StreamExt;
-use gcp_auth::{Token, TokenProvider};
-use http::Method;
+use gcp_auth::TokenProvider;
 use http::StatusCode;
 use reqwest::{Client, header};
 use scopeguard::ScopeGuard;
 use serde::{Deserialize, Deserializer, Serialize, de};
 use std::collections::HashMap;
 use std::fmt::Debug;
-use std::num::{NonZeroU32, ParseIntError};
-use std::pin::{Pin, pin};
+use std::num::NonZeroU32;
+use std::pin::pin;
 use std::str::FromStr;
 use std::sync::Arc;
 use std::time::Duration;
 use std::time::SystemTime;
-use tokio_util::codec::{BytesCodec, FramedRead};
 use tokio_util::sync::CancellationToken;
 use tracing;
-use url::{ParseError, Url};
 use utils::backoff;
 use uuid::Uuid;
 
@@ -232,8 +225,6 @@ impl GCSBucket {
                 },
             }
             
-            let mut req_uri = versions_base_uri.clone();
-
             let response = backoff::retry(
                 || async {
                      
@@ -352,7 +343,7 @@ impl GCSBucket {
         let data_part = reqwest::multipart::Part::stream_with_length(stream_body, fs_size as u64)
             .mime_str("application/octet-stream")?;
 
-        let mut form = reqwest::multipart::Form::new()
+        let form = reqwest::multipart::Form::new()
             .part("metadata", metadata_part)
             .part("bodystream", data_part);
 
@@ -685,17 +676,13 @@ impl GCSBucket {
     ) -> anyhow::Result<Download, DownloadError> {
         let kind = RequestKind::Get;
 
-        let permit = self.owned_permit(kind, cancel).await?;
+        let _permit = self.owned_permit(kind, cancel).await?;
 
         let started_at = start_measuring_requests(kind);
 
         let encoded_path: String =
             url::form_urlencoded::byte_serialize(request.key.as_bytes()).collect();
 
-        /// We do this in two parts:
-        /// 1. Serialize the metadata of the first request to get Etag, last modified, etc
-        /// 2. We do not .await the second request pass on the pinned stream to the 'get_object'
-        ///    caller
         let metadata_uri_mod = "alt=json";
         let download_uri = format!(
             "https://storage.googleapis.com/storage/v1/b/{}/o/{}?{}",
@@ -771,7 +758,7 @@ impl GCSBucket {
             generation_mod,
         );
 
-        let mut req = Client::new()
+        let req = Client::new()
             .get(stream_uri)
             .headers(headers)
             .bearer_auth(
@@ -819,7 +806,7 @@ impl GCSBucket {
             }
         };
 
-        let remaining = self.timeout.saturating_sub(started_at.elapsed());
+        let _remaining = self.timeout.saturating_sub(started_at.elapsed());
 
         let metadata = resp.metadata.map(StorageMetadata);
 
@@ -843,9 +830,9 @@ impl GCSBucket {
     
     async fn copy_object(
         &self, 
-        from: &RemotePath,
+        _from: &RemotePath,
         to: &RemotePath,
-        cancel: &CancellationToken,
+        _cancel: &CancellationToken,
         generation: Option<&String>,
     ) -> anyhow::Result<reqwest::RequestBuilder> {
 
@@ -943,7 +930,7 @@ impl RemoteStorage for GCSBucket {
 
         async_stream::stream! {
 
-            let mut continuation_token = None;
+            let mut _continuation_token = None;
 
             'outer: loop {
                 let started_at = start_measuring_requests(kind);
@@ -1031,7 +1018,7 @@ impl RemoteStorage for GCSBucket {
 
                 yield Ok(result);
 
-                continuation_token = match resp.next_page_token {
+                _continuation_token = match resp.next_page_token {
                     Some(token) => {
                         list_uri = list_uri + "&pageToken=" + &token;
                         Some(token)
@@ -1152,8 +1139,6 @@ impl RemoteStorage for GCSBucket {
         let kind = RequestKind::Delete;
         let permit = self.permit(kind, cancel).await?;
 
-        let mut delete_objects: Vec<String> = Vec::with_capacity(paths.len());
-
         let delete_objects: Vec<String> = paths
             .iter()
             .map(|i| self.relative_path_to_gcs_object(i))
@@ -1230,11 +1215,9 @@ impl RemoteStorage for GCSBucket {
            let last_vd = versions.last().unwrap();
            let key = self.relative_path_to_gcs_object(key);
            if last_vd.last_modified > done_if_after {
-               /// Case 1: we have a recent object outside of our restore window.
                tracing::trace!("Key {key} has version later than done_if_after, skipping");
                continue;
            }
-           /// we get index in the array that we want whether its `v` or `e`
            let version_to_restore_to =
                match versions.binary_search_by_key(&timestamp, |tpl| tpl.last_modified) {
                    Ok(v) => v,

@@ -40,7 +40,7 @@ pub const XLOG_FNAME_LEN: usize = 24;
 pub const XLP_BKP_REMOVABLE: u16 = 0x0004;
 pub const XLP_FIRST_IS_CONTRECORD: u16 = 0x0001;
 pub const XLP_REM_LEN_OFFS: usize = 2 + 2 + 4 + 8;
-pub const XLOG_RECORD_CRC_OFFS: usize = 4 + 4 + 8 + 1 + 1 + 2;
+pub const XLOG_RECORD_CRC_OFFS: usize = 4 + 4 + 4 + 4 + 8 + 1 + 1 + 2;
 
 pub const XLOG_SIZE_OF_XLOG_SHORT_PHD: usize = size_of::<XLogPageHeaderData>();
 pub const XLOG_SIZE_OF_XLOG_LONG_PHD: usize = size_of::<XLogLongPageHeaderData>();

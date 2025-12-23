@@ -40,15 +40,19 @@ impl Record {
         // Construct the WAL record header.
         let mut header = XLogRecord {
             xl_tot_len: (XLOG_SIZE_OF_XLOG_RECORD + data_header.len() + self.data.len()) as u32,
+            xl_term: 0,
             xl_xid: 0,
             xl_prev: prev_lsn.into(),
             xl_info: self.info,
             xl_rmid: self.rmid,
-            __bindgen_padding_0: [0; 2],
+            xl_bucket_id: 0,
+            __bindgen_padding_0: [0; 4],
             xl_crc: 0, // see below
         };
 
         // Compute the CRC checksum for the data, and the header up to the CRC field.
+        // Note: xl_term and xl_bucket_id (openGauss fields) are included in the CRC calculation
+        // as they are part of the XLogRecord header before xl_crc.
         let mut crc = 0;
         crc = crc32c_append(crc, &data_header);
         crc = crc32c_append(crc, &self.data);

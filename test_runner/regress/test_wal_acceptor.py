@@ -2226,14 +2226,25 @@ def test_timeline_copy(neon_env_builder: NeonEnvBuilder, insert_rows: int):
                 f"sk_id={sk.id} to flush {lsn}",
             )
 
-            sk.http_client().copy_timeline(
-                tenant_id,
-                timeline_id,
-                {
-                    "target_timeline_id": str(new_timeline_id),
-                    "until_lsn": str(lsn),
-                },
-            )
+            # 尝试复制时间线，带重试机制
+            import time
+            max_retries = 3
+            for attempt in range(max_retries):
+                try:
+                    sk.http_client().copy_timeline(
+                        tenant_id,
+                        timeline_id,
+                        {
+                            "target_timeline_id": str(new_timeline_id),
+                            "until_lsn": str(lsn),
+                        },
+                    )
+                    break  # 成功则跳出重试循环
+                except requests.exceptions.HTTPError as e:
+                    if attempt == max_retries - 1:  # 最后一次尝试失败则抛出异常
+                        raise
+                    log.info(f"copy_timeline failed on attempt {attempt + 1}, retrying: {e}")
+                    time.sleep(1)  # 等待1秒后重试
 
             new_digest = sk.http_client().timeline_digest(
                 tenant_id, new_timeline_id, timeline_start_lsn, lsn

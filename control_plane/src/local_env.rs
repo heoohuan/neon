@@ -1078,7 +1078,7 @@ fn generate_ssl_ca_cert(cert_path: &Path, key_path: &Path) -> anyhow::Result<()>
     // -out rootCA.crt -keyout rootCA.key
     let keygen_output = Command::new("openssl")
         .args([
-            "req", "-x509", "-newkey", "ed25519", "-nodes", "-days", "36500",
+            "req", "-x509", "-newkey", "rsa:2048", "-nodes", "-days", "36500",
         ])
         .args(["-subj", "/CN=Neon Local CA"])
         .args(["-out", cert_path.to_str().unwrap()])
@@ -1104,11 +1104,11 @@ fn generate_ssl_cert(
     let mut csr_path = cert_path.to_path_buf();
     csr_path.set_extension(".csr");
 
-    // openssl req -new -nodes -newkey ed25519 -keyout server.key -out server.csr \
+    // openssl req -new -nodes -newkey rsa:2048 -keyout server.key -out server.csr \
     // -subj "/CN=localhost" -addext "subjectAltName=DNS:localhost,IP:127.0.0.1"
     let keygen_output = Command::new("openssl")
         .args(["req", "-new", "-nodes"])
-        .args(["-newkey", "ed25519"])
+        .args(["-newkey", "rsa:2048"])
         .args(["-subj", "/CN=localhost"])
         .args(["-addext", "subjectAltName=DNS:localhost,IP:127.0.0.1"])
         .args(["-keyout", key_path.to_str().unwrap()])
@@ -1134,7 +1134,6 @@ fn generate_ssl_cert(
         .arg("-CAcreateserial")
         .args(["-out", cert_path.to_str().unwrap()])
         .args(["-days", "36500"])
-        .args(["-copy_extensions", "copyall"])
         .output()
         .context("failed to sign CSR")?;
     if !keygen_output.status.success() {

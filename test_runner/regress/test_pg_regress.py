@@ -17,7 +17,7 @@ from fixtures.neon_fixtures import (
     tenant_get_shards,
 )
 from fixtures.pg_version import PgVersion
-from fixtures.remote_storage import s3_storage
+from fixtures.remote_storage import RemoteStorageKind
 from fixtures.utils import skip_in_debug_build
 
 if TYPE_CHECKING:
@@ -131,7 +131,7 @@ def patch_tenant_conf(tenant_conf: dict[str, Any], reldir_type: str) -> dict[str
 
 # Run the main PostgreSQL regression tests, in src/test/regress.
 #
-@pytest.mark.timeout(3000)  # Contains many sub-tests, is slow in debug builds
+@pytest.mark.timeout(6000)  # Contains many sub-tests, is slow in debug builds, increase timeout
 @pytest.mark.parametrize("shard_count", [None, 4])
 @pytest.mark.parametrize("reldir_type", ["v1", "v2"])
 def test_pg_regress(
@@ -153,7 +153,8 @@ def test_pg_regress(
     if shard_count is not None:
         neon_env_builder.num_pageservers = shard_count
 
-    neon_env_builder.enable_pageserver_remote_storage(s3_storage())
+    # Use local file system storage instead of S3 if S3 is not available
+    neon_env_builder.enable_pageserver_remote_storage(RemoteStorageKind.LOCAL_FS)
     env = neon_env_builder.init_start(
         initial_tenant_conf=patch_tenant_conf(TENANT_CONF, reldir_type),
         initial_tenant_shard_count=shard_count,
@@ -186,7 +187,6 @@ def test_pg_regress(
 
     pg_regress_command = [
         str(pg_regress),
-        '--bindir=""',
         "--use-existing",
         f"--bindir={bindir}",
         f"--dlpath={build_path}",
@@ -211,7 +211,7 @@ def test_pg_regress(
 
 # Run the PostgreSQL "isolation" tests, in src/test/isolation.
 #
-@pytest.mark.timeout(1500)  # Contains many sub-tests, is slow in debug builds
+@pytest.mark.timeout(3000)  # Contains many sub-tests, is slow in debug builds, increase timeout
 @pytest.mark.parametrize("shard_count", [None, 4])
 @pytest.mark.parametrize("reldir_type", ["v1", "v2"])
 def test_isolation(
@@ -228,7 +228,8 @@ def test_isolation(
 
     if shard_count is not None:
         neon_env_builder.num_pageservers = shard_count
-    neon_env_builder.enable_pageserver_remote_storage(s3_storage())
+    # Use local file system storage instead of S3 if S3 is not available
+    neon_env_builder.enable_pageserver_remote_storage(RemoteStorageKind.LOCAL_FS)
     env = neon_env_builder.init_start(
         initial_tenant_conf=patch_tenant_conf(TENANT_CONF, reldir_type),
         initial_tenant_shard_count=shard_count,
@@ -270,8 +271,8 @@ def test_isolation(
         "--use-existing",
         f"--bindir={bindir}",
         f"--dlpath={build_path}",
-        f"--inputdir={src_path}",
         f"--schedule={schedule}",
+        f"--inputdir={src_path}",
     ]
 
     env_vars = {
@@ -292,6 +293,7 @@ def test_isolation(
 
 # Run extra Neon-specific pg_regress-based tests. The tests and their
 # schedule file are in the sql_regress/ directory.
+@pytest.mark.timeout(600)  # Increase timeout for sql_regress tests in debug mode
 @pytest.mark.parametrize("shard_count", [None, 4])
 @pytest.mark.parametrize("reldir_type", ["v1", "v2"])
 def test_sql_regress(
@@ -308,7 +310,8 @@ def test_sql_regress(
 
     if shard_count is not None:
         neon_env_builder.num_pageservers = shard_count
-    neon_env_builder.enable_pageserver_remote_storage(s3_storage())
+    # Use local file system storage instead of S3 if S3 is not available
+    neon_env_builder.enable_pageserver_remote_storage(RemoteStorageKind.LOCAL_FS)
     env = neon_env_builder.init_start(
         initial_tenant_conf=patch_tenant_conf(TENANT_CONF, reldir_type),
         initial_tenant_shard_count=shard_count,

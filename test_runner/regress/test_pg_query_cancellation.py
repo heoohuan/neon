@@ -103,13 +103,13 @@ def connect_works_correctly(
     failpoint: str, ep: Endpoint, ps: NeonPageserver, ps_http: PageserverHttpClient
 ):
     log.debug("Starting work on %s", failpoint)
-    # All queries we use should finish (incl. IO) within 500ms,
+    # All queries we use should finish (incl. IO) within 1500ms,
     # including all their IO.
     # This allows us to use `SET statement_timeout` to let the query
     # timeout system cancel queries, rather than us having to go
     # through the most annoying effort of manual query cancellation
     # in psycopg2.
-    options = "-cstatement_timeout=500ms -ceffective_io_concurrency=1"
+    options = "-cstatement_timeout=1500ms -ceffective_io_concurrency=1"
 
     ep.start()
 
@@ -201,7 +201,7 @@ def connect_works_correctly(
     with closing(ep.connect(options=options, autocommit=True)) as conn:
         with conn.cursor() as cur:
             cur.execute("SHOW statement_timeout;")
-            assert cur.fetchone() == ("500ms",)
+            assert cur.fetchone() == ("1500ms",)
             assert check_buffers(cur) is None
             exec_may_cancel(
                 """

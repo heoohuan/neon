@@ -223,6 +223,7 @@ impl WalStreamDecoderHandler for WalStreamDecoder {
             })?;
 
         let mut crc = 0;
+        // CRC calculation includes all header fields up to xl_crc, including openGauss fields xl_term and xl_bucket_id
         crc = crc32c_append(crc, &recordbuf[XLOG_RECORD_CRC_OFFS + 4..]);
         crc = crc32c_append(crc, &recordbuf[0..XLOG_RECORD_CRC_OFFS]);
         if crc != xlogrec.xl_crc {

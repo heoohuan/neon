@@ -97,6 +97,7 @@ macro_rules! dispatch_pgversion {
                 $crate::PgMajorVersion::PG15 => v15,
                 $crate::PgMajorVersion::PG16 => v16,
                 $crate::PgMajorVersion::PG17 => v17,
+                $crate::PgMajorVersion::GB06 => v6,
             ]
         )
     };
@@ -129,6 +130,7 @@ macro_rules! enum_pgversion_dispatch {
                 V15 : v15,
                 V16 : v16,
                 V17 : v17,
+                V6 : v6,
             ]
         )
     };
@@ -159,6 +161,7 @@ macro_rules! enum_pgversion {
                 V15 : v15,
                 V16 : v16,
                 V17 : v17,
+                V6 : v6,
             ]
         }
     };
@@ -172,6 +175,7 @@ macro_rules! enum_pgversion {
                 V15 : v15,
                 V16 : v16,
                 V17 : v17,
+                V6 : v6,
             ]
         }
     };
@@ -422,6 +426,217 @@ pub mod waldecoder {
                     lsn: self.lsn,
                 })
             )
+        }
+    }
+}
+
+pub mod v6 {
+    use bytes::{Buf, Bytes};
+
+    pub use crate::TimeLineID;
+    pub use postgres_ffi_types::TimestampTz;
+
+    use crate::{OffsetNumber, TransactionId};
+
+    pub mod bindings {
+        use crate::PgMajorVersion;
+
+        pub const MY_PGVERSION: PgMajorVersion = PgMajorVersion::GB06;
+
+        pub const XLOG_DBASE_CREATE: u8 = 0x00;
+        pub const XLOG_DBASE_DROP: u8 = 0x10;
+
+        pub const BKPIMAGE_IS_COMPRESSED: u8 = 0x02; /* page image is compressed */
+        pub const BKPIMAGE_APPLY: u8 = 0x04; /* page image should be restored during replay */
+        pub const SIZEOF_RELMAPFILE: usize = 512; /* sizeof(RelMapFile) in relmapper.c */
+
+        // List of subdirectories inside pgdata.
+        // Copied from src/bin/initdb/initdb.c
+        pub const PGDATA_SUBDIRS: [&str; 22] = [
+            "global",
+            "pg_wal/archive_status",
+            "pg_commit_ts",
+            "pg_dynshmem",
+            "pg_notify",
+            "pg_serial",
+            "pg_snapshots",
+            "pg_subtrans",
+            "pg_twophase",
+            "pg_multixact",
+            "pg_multixact/members",
+            "pg_multixact/offsets",
+            "base",
+            "base/1",
+            "pg_replslot",
+            "pg_tblspc",
+            "pg_stat",
+            "pg_stat_tmp",
+            "pg_xact",
+            "pg_logical",
+            "pg_logical/snapshots",
+            "pg_logical/mappings",
+        ];
+
+        pub fn bkpimg_is_compressed(bimg_info: u8) -> bool {
+            (bimg_info & BKPIMAGE_IS_COMPRESSED) != 0
+        }
+    }
+
+    pub mod xlog_utils {
+        pub use crate::v14::xlog_utils::*;
+    }
+
+    pub mod waldecoder_handler {
+        pub use crate::v14::waldecoder_handler::*;
+    }
+
+    #[repr(C)]
+    #[derive(Debug)]
+    pub struct XlHeapInsert {
+        pub offnum: OffsetNumber,
+        pub flags: u8,
+    }
+
+    impl XlHeapInsert {
+        pub fn decode(buf: &mut Bytes) -> XlHeapInsert {
+            XlHeapInsert {
+                offnum: buf.get_u16_le(),
+                flags: buf.get_u8(),
+            }
+        }
+    }
+
+    #[repr(C)]
+    #[derive(Debug)]
+    pub struct XlHeapMultiInsert {
+        pub flags: u8,
+        pub _padding: u8,
+        pub ntuples: u16,
+    }
+
+    impl XlHeapMultiInsert {
+        pub fn decode(buf: &mut Bytes) -> XlHeapMultiInsert {
+            XlHeapMultiInsert {
+                flags: buf.get_u8(),
+                _padding: buf.get_u8(),
+                ntuples: buf.get_u16_le(),
+            }
+        }
+    }
+
+    #[repr(C)]
+    #[derive(Debug)]
+    pub struct XlHeapDelete {
+        pub xmax: TransactionId,
+        pub offnum: OffsetNumber,
+        pub infobits_set: u8,
+        pub flags: u8,
+    }
+
+    impl XlHeapDelete {
+        pub fn decode(buf: &mut Bytes) -> XlHeapDelete {
+            XlHeapDelete {
+                xmax: buf.get_u32_le(),
+                offnum: buf.get_u16_le(),
+                infobits_set: buf.get_u8(),
+                flags: buf.get_u8(),
+            }
+        }
+    }
+
+    #[repr(C)]
+    #[derive(Debug)]
+    pub struct XlHeapUpdate {
+        pub old_xmax: TransactionId,
+        pub old_offnum: OffsetNumber,
+        pub old_infobits_set: u8,
+        pub flags: u8,
+        pub t_cid: u32,
+        pub new_xmax: TransactionId,
+        pub new_offnum: OffsetNumber,
+    }
+
+    impl XlHeapUpdate {
+        pub fn decode(buf: &mut Bytes) -> XlHeapUpdate {
+            XlHeapUpdate {
+                old_xmax: buf.get_u32_le(),
+                old_offnum: buf.get_u16_le(),
+                old_infobits_set: buf.get_u8(),
+                flags: buf.get_u8(),
+                t_cid: buf.get_u32_le(),
+                new_xmax: buf.get_u32_le(),
+                new_offnum: buf.get_u16_le(),
+            }
+        }
+    }
+
+    #[repr(C)]
+    #[derive(Debug)]
+    pub struct XlHeapLock {
+        pub locking_xid: TransactionId,
+        pub offnum: OffsetNumber,
+        pub infobits_set: u8,
+        pub flags: u8,
+    }
+
+    impl XlHeapLock {
+        pub fn decode(buf: &mut Bytes) -> XlHeapLock {
+            XlHeapLock {
+                locking_xid: buf.get_u32_le(),
+                offnum: buf.get_u16_le(),
+                infobits_set: buf.get_u8(),
+                flags: buf.get_u8(),
+            }
+        }
+    }
+
+    #[repr(C)]
+    #[derive(Debug)]
+    pub struct XlParameterChange {
+        pub max_connections: i32,
+        pub max_worker_processes: i32,
+        pub max_wal_senders: i32,
+        pub max_prepared_xacts: i32,
+        pub max_locks_per_xact: i32,
+        pub wal_level: i32,
+        pub wal_log_hints: bool,
+        pub track_commit_timestamp: bool,
+        pub _padding: [u8; 2],
+    }
+
+    impl XlParameterChange {
+        pub fn decode(buf: &mut Bytes) -> XlParameterChange {
+            XlParameterChange {
+                max_connections: buf.get_i32_le(),
+                max_worker_processes: buf.get_i32_le(),
+                max_wal_senders: buf.get_i32_le(),
+                max_prepared_xacts: buf.get_i32_le(),
+                max_locks_per_xact: buf.get_i32_le(),
+                wal_level: buf.get_i32_le(),
+                wal_log_hints: buf.get_u8() != 0,
+                track_commit_timestamp: buf.get_u8() != 0,
+                _padding: [buf.get_u8(), buf.get_u8()],
+            }
+        }
+    }
+
+    #[repr(C)]
+    #[derive(Debug)]
+    pub struct XlEndOfRecovery {
+        pub end_time: TimestampTz,
+        pub this_time_line_id: TimeLineID,
+        pub prev_time_line_id: TimeLineID,
+        pub wal_level: i32,
+    }
+
+    impl XlEndOfRecovery {
+        pub fn decode(buf: &mut Bytes) -> XlEndOfRecovery {
+            XlEndOfRecovery {
+                end_time: buf.get_i64_le(),
+                this_time_line_id: buf.get_u32_le(),
+                prev_time_line_id: buf.get_u32_le(),
+                wal_level: buf.get_i32_le(),
+            }
         }
     }
 }

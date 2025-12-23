@@ -12,6 +12,7 @@ pub enum PgMajorVersion {
     PG15 = 15,
     PG16 = 16,
     PG17 = 17,
+    GB06 = 6,
     // !!! When you add a new PgMajorVersion, don't forget to update PgMajorVersion::ALL
 }
 
@@ -71,6 +72,7 @@ impl PgMajorVersion {
             PgMajorVersion::PG15 => 15,
             PgMajorVersion::PG16 => 16,
             PgMajorVersion::PG17 => 17,
+            PgMajorVersion::GB06 => 6,
         }
     }
 
@@ -84,6 +86,7 @@ impl PgMajorVersion {
             PgMajorVersion::PG15 => "15",
             PgMajorVersion::PG16 => "16\x0A",
             PgMajorVersion::PG17 => "17\x0A",
+            PgMajorVersion::GB06 => "6\x0A",
         }
     }
 
@@ -97,6 +100,7 @@ impl PgMajorVersion {
             PgMajorVersion::PG15 => "v15",
             PgMajorVersion::PG16 => "v16",
             PgMajorVersion::PG17 => "v17",
+            PgMajorVersion::GB06 => "v6",
         }
         .to_string()
     }
@@ -107,6 +111,7 @@ impl PgMajorVersion {
         PgMajorVersion::PG15,
         PgMajorVersion::PG16,
         PgMajorVersion::PG17,
+        PgMajorVersion::GB06,
     ];
 }
 
@@ -117,6 +122,7 @@ impl Display for PgMajorVersion {
             PgMajorVersion::PG15 => "PgMajorVersion::PG15",
             PgMajorVersion::PG16 => "PgMajorVersion::PG16",
             PgMajorVersion::PG17 => "PgMajorVersion::PG17",
+            PgMajorVersion::GB06 => "PgMajorVersion::GB06",
         })
     }
 }
@@ -140,6 +146,7 @@ impl TryFrom<PgVersionId> for PgMajorVersion {
             15 => PgMajorVersion::PG15,
             16 => PgMajorVersion::PG16,
             17 => PgMajorVersion::PG17,
+            6 => PgMajorVersion::GB06,
             _ => return Err(InvalidPgVersion(value.0)),
         })
     }
@@ -169,6 +176,7 @@ impl FromStr for PgMajorVersion {
             "15" => PgMajorVersion::PG15,
             "16" => PgMajorVersion::PG16,
             "17" => PgMajorVersion::PG17,
+            "6"  => PgMajorVersion::GB06,
             _ => return Err(PgMajorVersionParseError(s.to_string())),
         })
     }
